@@ -1,2 +1,2 @@
-# rke2-airgap
+# RKE2 Airgap Setup
 Rancher RKE2 Airgap Setup
