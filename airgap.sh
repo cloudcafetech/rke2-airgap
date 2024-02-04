@@ -13,6 +13,7 @@ export RANCHER_VERSION=2.8.1
 export LONGHORN_VERSION=1.5.3
 export NEU_VERSION=2.6.6
 export DOMAIN=awesome.sauce
+export BUILD_SERVER_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
 
 ######  NO MOAR EDITS #######
 export RED='\x1b[0;31m'
@@ -259,6 +260,10 @@ function deploy_control () {
   # mkdir /opt/rancher
   # tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher
 
+  # Mount from Build server
+  mkdir /opt/rancher
+  mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
+
   base
 
   echo - Install rke2
@@ -381,6 +386,10 @@ EOF
 function deploy_worker () {
   echo - deploy worker
 
+  # Mount from Build server
+  mkdir /opt/rancher
+  mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
+
   # check for mount point
   if [ ! -f /opt/rancher/token ]; then echo " -$RED Did you mount the volume from the first node?$NO_COLOR"; exit 1; fi
 
@@ -499,3 +508,4 @@ case "$1" in
         validate) validate;;
         *) usage;;
 esac
+
