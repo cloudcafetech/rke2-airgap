@@ -6,6 +6,9 @@
 
 set -ebpf
 
+export BUILD_SERVER_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
+export LB_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
+
 # versions
 export RKE_VERSION=1.26.12
 export CERT_VERSION=v1.13.3
@@ -13,7 +16,6 @@ export RANCHER_VERSION=2.8.1
 export LONGHORN_VERSION=1.5.3
 export NEU_VERSION=2.6.6
 export DOMAIN=awesome.sauce
-export BUILD_SERVER_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
 
 ######  NO MOAR EDITS #######
 export RED='\x1b[0;31m'
@@ -71,7 +73,6 @@ function build () {
   tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
   mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
   rm -rf linux-amd64 > /dev/null 2>&1
-  rm -rf helm-v3.13.2-linux-amd64.tar.gz
 
   echo - add repos
   helm repo add jetstack https://charts.jetstack.io --force-update > /dev/null 2>&1
@@ -293,78 +294,12 @@ function deploy_control () {
   ln -s /var/run/k3s/containerd/containerd.sock /var/run/containerd/containerd.sock
   source ~/.bashrc
 
-  echo - Setup nfs
-  # share out opt directory
-  echo "/opt/rancher *(ro)" > /etc/exports
-  systemctl enable nfs-server.service && systemctl start nfs-server.service
-
   sleep 5
-
-  echo - run local registry
-  # Adam made me use localhost:5000
-  chcon system_u:object_r:container_file_t:s0 /opt/rancher/registry
-
-cat <<EOF | kubectl apply -f -
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: registry
-  labels:
-    app: registry
-spec:
-  selector:
-    matchLabels:
-      app: registry
-  template:
-    metadata:
-      labels:
-        app: registry
-    spec:
-      containers:
-      - name: registry
-        image: registry
-        imagePullPolicy: Never
-        ports:
-        - name: registry
-          containerPort: 5000
-        securityContext:
-          capabilities:
-            add:
-            - NET_BIND_SERVICE
-        volumeMounts:
-        - name: registry
-          mountPath: /var/lib/registry
-      volumes:
-      - name: registry
-        hostPath:
-          path: /opt/rancher/registry
-      hostNetwork: true
-EOF
-
-  echo sleep
-  sleep 45
-  
-  echo - load images
-  for file in $(ls /opt/rancher/images/longhorn/ | grep -v txt ); do 
-    skopeo copy docker-archive:/opt/rancher/images/longhorn/"$file" docker://"$(echo "$file" | sed 's/.tar//g' | awk -F_ '{print "localhost:5000/longhornio/"$1":"$2}')" --dest-tls-verify=false
-  done
-
-  for file in $(ls /opt/rancher/images/cert/ | grep -v txt ); do 
-    skopeo copy docker-archive:/opt/rancher/images/cert/"$file" docker://"$(echo "$file" | sed 's/.tar//g' | awk -F_ '{print "localhost:5000/cert/"$1":"$2}')" --dest-tls-verify=false
-  done
-
-  for file in $(ls /opt/rancher/images/neuvector/ | grep -v txt ); do 
-    skopeo copy docker-archive:/opt/rancher/images/neuvector/"$file" docker://"$(echo "$file" | sed 's/.tar//g' | awk -F_ '{print "localhost:5000/neuvector/"$1":"$2}')" --dest-tls-verify=false
-  done
-
-  for file in $(ls /opt/rancher/images/rancher/ | grep -v txt ); do 
-    skopeo copy docker-archive:/opt/rancher/images/rancher/"$file" docker://"$(echo "$file" | sed 's/.tar//g' | awk -F_ '{print "localhost:5000/rancher/"$1":"$2}')" --dest-tls-verify=false
-  done
 
   echo - unpack helm
   cd /opt/rancher/helm
   tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
-  rsync -avP linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
+  mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
 
   cat /var/lib/rancher/rke2/server/token > /opt/rancher/token
 
@@ -401,7 +336,7 @@ function deploy_worker () {
 
   # setup RKE2
   mkdir -p /etc/rancher/rke2/
-  echo -e "server: https://$server:9345\ntoken: $token\nwrite-kubeconfig-mode: 0600\n#profile: cis-1.23\nkube-apiserver-arg:\n- \"authorization-mode=RBAC,Node\"\nkubelet-arg:\n- \"protect-kernel-defaults=true\" " > /etc/rancher/rke2/config.yaml
+  echo -e "server: https://$LB_IP:9345\ntoken: $token\nwrite-kubeconfig-mode: 0600\n#profile: cis-1.23\nkube-apiserver-arg:\n- \"authorization-mode=RBAC,Node\"\nkubelet-arg:\n- \"protect-kernel-defaults=true\" " > /etc/rancher/rke2/config.yaml
 
   # install rke2
   cd /opt/rancher
