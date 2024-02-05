@@ -1,13 +1,28 @@
 #!/bin/bash
 
-# mkdir /opt/rancher && cd /opt/rancher && curl -#OL https://raw.githubusercontent.com/clemenko/rke_airgap_install/main/air_gap_all_the_things.sh && chmod 755 air_gap_all_the_things.sh
+# mkdir /opt/rancher && cd /opt/rancher && curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/airgap.sh && chmod 755 airgap.sh
 
 # interesting https://docs.k3s.io/installation/registry-mirrors
 
 set -ebpf
 
-export BUILD_SERVER_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
-export LB_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
+BUILD_SERVER_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
+LB_IP=
+
+MASTERDNS1=
+MASTERDNS2=
+MASTERDNS3=
+
+MASTERIP1=
+MASTERIP2=
+MASTERIP3=
+
+INFRAIP1=
+INFRAIP2=
+
+INFRADNS1=
+INFRANDS2=
+
 
 # versions
 export RKE_VERSION=1.26.12
@@ -47,12 +62,40 @@ function build () {
   curl -sL "https://github.com/google/go-containerregistry/releases/download/v0.19.0/go-containerregistry_Linux_x86_64.tar.gz" > go-containerregistry.tar.gz
   tar -zxvf go-containerregistry.tar.gz -C /usr/local/bin/ crane
 
-  mkdir -p /root/registry/data
-  chcon system_u:object_r:container_file_t:s0 /root/registry/data
-  docker run -itd -p 5000:5000 --name private-registry --restart=always -v /root/registry/data:/var/lib/registry registry
-
   mkdir -p /opt/rancher/{rke2_$RKE_VERSION,helm} /opt/rancher/images/{cert,rancher,longhorn,registry,flask,neuvector}
   cd /opt/rancher/rke2_$RKE_VERSION/
+
+  echo - Private Registry Setup
+  mkdir -p /root/registry/data/auth
+  chcon system_u:object_r:container_file_t:s0 /root/registry/data
+  docker run --name htpass --entrypoint htpasswd httpd:2 -Bbn admin admin@2675 > /root/registry/data/auth/htpasswd  
+  docker rm htpass
+  #docker run -itd -p 5000:5000 --name private-registry --restart=always -v /root/registry/data:/var/lib/registry registry
+  docker run -itd \
+  -p 5000:5000 \
+  --restart=always \
+  --name private-registry \
+  -v /root/registry/data/auth:/auth \
+  -v /root/registry/data:/var/lib/registry \
+  -e "REGISTRY_AUTH=htpasswd" \
+  -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
+  -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+  registry
+
+
+cat <<EOF > /opt/rancher/rke2_$RKE_VERSION/registries.yaml
+mirrors:
+  docker.io:
+    endpoint:
+      - "http://$BUILD_SERVER_IP:5000"
+configs:
+  "$BUILD_SERVER_IP:5000":
+    auth:
+      username: admin
+      password: admin@2675
+    #tls:
+      #insecure_skip_verify: true
+EOF
 
   echo - download rke, rancher and longhorn
   # from https://docs.rke2.io/install/airgap
@@ -172,6 +215,11 @@ function build () {
      skopeo copy docker-archive:/opt/rancher/images/flask/"$file" docker://"$(echo "$file" | sed 's/.tar//g' | awk '{print "localhost:5000/flask/"$1}')" --dest-tls-verify=false
   done
 
+  # Verify Image upload
+  crane catalog localhost:5000
+  crane copy busybox:1.36 localhost:5000/library/busybox:1.36
+  crane catalog localhost:5000
+
   cd /opt/rancher/
   echo - compress all the things
   tar -I zstd -vcf /opt/rke2_rancher_longhorn.zst $(ls) > /dev/null 2>&1
@@ -189,6 +237,115 @@ function build () {
   echo "   mkdir /opt/rancher"
   echo "   tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher"
   echo "------------------------------------------------------------------"
+
+}
+
+################################# LB Setup ################################
+function lbsetup () {
+
+  echo - Configuring HAProxy Server
+  yum install haproxy -y 
+
+cat <<EOF > /etc/haproxy/haproxy.cfg
+# Global settings
+#---------------------------------------------------------------------
+global
+    maxconn     20000
+    log         /dev/log local0 info
+    chroot      /var/lib/haproxy
+    pidfile     /var/run/haproxy.pid
+    user        haproxy
+    group       haproxy
+    daemon
+    # turn on stats unix socket
+    stats socket /var/lib/haproxy/stats
+#---------------------------------------------------------------------
+# common defaults that all the 'listen' and 'backend' sections will
+# use if not designated in their block
+#---------------------------------------------------------------------
+defaults
+    log                     global
+    mode                    http
+    option                  httplog
+    option                  dontlognull
+    option http-server-close
+    option redispatch
+    option forwardfor       except 127.0.0.0/8
+    retries                 3
+    maxconn                 20000
+    timeout http-request    10000ms
+    timeout http-keep-alive 10000ms
+    timeout check           10000ms
+    timeout connect         40000ms
+    timeout client          300000ms
+    timeout server          300000ms
+    timeout queue           50000ms
+
+# Enable HAProxy stats
+listen stats
+    bind :9000
+    stats uri /stats
+    stats refresh 10000ms
+
+# RKE2 Supervisor Server
+frontend rke2_supervisor_frontend
+    bind :6443
+    default_backend rke2_supervisor_backend
+    mode tcp
+
+backend rke2_supervisor_backend
+    mode tcp
+    balance source
+    server      $MASTERDNS1 $MASTERIP1:9345 check
+    server      $MASTERDNS2 $MASTERIP2:9345 check
+    server      $MASTERDNS3 $MASTERIP3:9345 check
+
+# RKE2 Kube API Server
+frontend rke2_api_frontend
+    bind :6443
+    default_backend rke2_api_backend
+    mode tcp
+
+backend rke2_api_backend
+    mode tcp
+    balance source
+    server      $MASTERDNS1 $MASTERIP1:6443 check
+    server      $MASTERDNS2 $MASTERIP2:6443 check
+    server      $MASTERDNS3 $MASTERIP3:6443 check
+
+# RKE2 Ingress - layer 4 tcp mode for each. Ingress Controller will handle layer 7.
+frontend rke2_http_ingress_frontend
+    bind :80
+    default_backend rke2_http_ingress_backend
+    mode tcp
+
+backend rke2_http_ingress_backend
+    balance source
+    mode tcp
+    server      $INFRADNS1 $INFRAIP1:80 check
+    server      $INFRADNS2 $INFRAIP2:80 check
+
+frontend rke2_https_ingress_frontend
+    bind *:443
+    default_backend rke2_https_ingress_backend
+    mode tcp
+
+backend rke2_https_ingress_backend
+    mode tcp
+    balance source
+    server      $INFRADNS1 $INFRAIP1:443 check
+    server      $INFRADNS2 $INFRAIP2:443 check
+EOF
+
+setsebool -P haproxy_connect_any 1
+systemctl start haproxy;systemctl enable haproxy
+
+firewall-cmd --add-port=6443/tcp --permanent
+firewall-cmd --add-port=443/tcp --permanent
+firewall-cmd --add-service=http --permanent
+firewall-cmd --add-service=https --permanent
+firewall-cmd --add-port=9000/tcp --permanent
+firewall-cmd --reload
 
 }
 
@@ -255,32 +412,65 @@ sysctl -p > /dev/null 2>&1
   echo -e "[keyfile]\nunmanaged-devices=interface-name:cali*;interface-name:flannel*" > /etc/NetworkManager/conf.d/rke2-canal.conf
 }
 
-################################# deploy control ################################
-function deploy_control () {
+################################# Deploy Master 1 ################################
+function deploy_control1 () {
   # this is for the first node
   # mkdir /opt/rancher
   # tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher
+
+  # Stopping and disabling firewalld & SELinux
+  systemctl stop firewalld; systemctl disable firewalld
+  setenforce 0
+  sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+
+  echo install packages
+  yum install -y zstd nfs-utils iptables skopeo container-selinux iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils
 
   # Mount from Build server
   mkdir /opt/rancher
   mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
 
-  base
+  #base
+
+  # Setting up Kubernetes Master using RKE2
+  mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images 
+  cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
+
+cat << EOF >  /etc/rancher/rke2/config.yaml
+token: pkls-secret
+write-kubeconfig-mode: "0644"
+cluster-cidr: 192.168.0.0/16
+service-cidr: 192.167.0.0/16
+node-label:
+- "region=master"
+tls-san:
+  - "$LB_IP"
+  - "$MASTERDNS1"
+  - "$MASTERDNS2"
+  - "$MASTERDNS3"
+  - "$MASTERIP1"
+  - "$MASTERIP2"
+  - "$MASTERIP3"
+disable:
+  - rke2-ingress-nginx
+  - rke2-snapshot-controller
+  - rke2-snapshot-controller-crd
+  - rke2-snapshot-validation-webhook
+#  - rke2-coredns
+#  - rke2-metrics-server
+EOF
 
   echo - Install rke2
   cd /opt/rancher/rke2_$RKE_VERSION
-  useradd -r -c "etcd user" -s /sbin/nologin -M etcd -U
-  mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images /opt/rancher/registry
-  echo -e "#profile: cis-1.23\nselinux: true\nsecrets-encryption: true\nwrite-kubeconfig-mode: 0600\nkube-controller-manager-arg:\n- bind-address=127.0.0.1\n- use-service-account-credentials=true\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\nkube-scheduler-arg:\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\nkube-apiserver-arg:\n- tls-min-version=VersionTLS12\n- tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384\n- authorization-mode=RBAC,Node\n- anonymous-auth=false\n- audit-policy-file=/etc/rancher/rke2/audit-policy.yaml\n- audit-log-mode=blocking-strict\n- audit-log-maxage=30\nkubelet-arg:\n- protect-kernel-defaults=true\n- read-only-port=0\n- authorization-mode=Webhook" > /etc/rancher/rke2/config.yaml
 
   # set up audit policy file
-  echo -e "apiVersion: audit.k8s.io/v1\nkind: Policy\nrules:\n- level: RequestResponse" > /etc/rancher/rke2/audit-policy.yaml
+  #echo -e "apiVersion: audit.k8s.io/v1\nkind: Policy\nrules:\n- level: RequestResponse" > /etc/rancher/rke2/audit-policy.yaml
 
   # set up ssl passthrough for nginx
-  echo -e "---\napiVersion: helm.cattle.io/v1\nkind: HelmChartConfig\nmetadata:\n  name: rke2-ingress-nginx\n  namespace: kube-system\nspec:\n  valuesContent: |-\n    controller:\n      config:\n        use-forwarded-headers: true\n      extraArgs:\n        enable-ssl-passthrough: true" > /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx-config.yaml
+  #echo -e "---\napiVersion: helm.cattle.io/v1\nkind: HelmChartConfig\nmetadata:\n  name: rke2-ingress-nginx\n  namespace: kube-system\nspec:\n  valuesContent: |-\n    controller:\n      config:\n        use-forwarded-headers: true\n      extraArgs:\n        enable-ssl-passthrough: true" > /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx-config.yaml
 
   # pre-load registry image
-  rsync -avP /opt/rancher/images/registry/registry.tar /var/lib/rancher/rke2/agent/images/
+  #rsync -avP /opt/rancher/images/registry/registry.tar /var/lib/rancher/rke2/agent/images/
 
  # insall rke2 - stig'd
   INSTALL_RKE2_ARTIFACT_PATH=/opt/rancher/rke2_"$RKE_VERSION" sh /opt/rancher/rke2_"$RKE_VERSION"/install.sh 
@@ -301,7 +491,7 @@ function deploy_control () {
   tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
   mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
 
-  cat /var/lib/rancher/rke2/server/token > /opt/rancher/token
+  #cat /var/lib/rancher/rke2/server/token > /opt/rancher/token
 
   source ~/.bashrc
 
@@ -317,22 +507,119 @@ function deploy_control () {
 
 }
 
-################################# deploy worker ################################
-function deploy_worker () {
-  echo - deploy worker
+################################# Deploy Master 2 & 3 ################################
+function deploy_control23 () {
+  # this is for the 2nd & 3rd Master node
+  # mkdir /opt/rancher
+  # tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher
+
+  # Stopping and disabling firewalld & SELinux
+  systemctl stop firewalld; systemctl disable firewalld
+  setenforce 0
+  sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+
+  echo install packages
+  yum install -y zstd nfs-utils iptables skopeo container-selinux iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils
 
   # Mount from Build server
   mkdir /opt/rancher
   mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
 
+  #base
+
+  # Setting up Kubernetes Master using RKE2
+  mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images 
+  cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
+
+cat << EOF >  /etc/rancher/rke2/config.yaml
+server: https://MASTERIP1:9345
+token: pkls-secret
+write-kubeconfig-mode: "0644"
+node-label:
+- "region=master"
+tls-san:
+  - "$LB_IP"
+  - "$MASTERDNS1"
+  - "$MASTERDNS2"
+  - "$MASTERDNS3"
+  - "$MASTERIP1"
+  - "$MASTERIP2"
+  - "$MASTERIP3"
+#node-taint:
+  #- "CriticalAddonsOnly=true:NoExecute"
+EOF
+
+  echo - Install rke2
+  cd /opt/rancher/rke2_$RKE_VERSION
+
+  # set up audit policy file
+  #echo -e "apiVersion: audit.k8s.io/v1\nkind: Policy\nrules:\n- level: RequestResponse" > /etc/rancher/rke2/audit-policy.yaml
+
+  # set up ssl passthrough for nginx
+  #echo -e "---\napiVersion: helm.cattle.io/v1\nkind: HelmChartConfig\nmetadata:\n  name: rke2-ingress-nginx\n  namespace: kube-system\nspec:\n  valuesContent: |-\n    controller:\n      config:\n        use-forwarded-headers: true\n      extraArgs:\n        enable-ssl-passthrough: true" > /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx-config.yaml
+
+  # pre-load registry image
+  #rsync -avP /opt/rancher/images/registry/registry.tar /var/lib/rancher/rke2/agent/images/
+
+ # insall rke2 - stig'd
+  INSTALL_RKE2_ARTIFACT_PATH=/opt/rancher/rke2_"$RKE_VERSION" sh /opt/rancher/rke2_"$RKE_VERSION"/install.sh 
+  yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
+  systemctl enable --now rke2-server.service
+
+  sleep 30
+
+  # wait and add link
+  echo "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml CRI_CONFIG_FILE=/var/lib/rancher/rke2/agent/etc/crictl.yaml PATH=$PATH:/var/lib/rancher/rke2/bin" >> ~/.bashrc
+  ln -s /var/run/k3s/containerd/containerd.sock /var/run/containerd/containerd.sock
+  source ~/.bashrc
+
+  sleep 5
+
+  echo - unpack helm
+  cd /opt/rancher/helm
+  tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
+  mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
+
+  source ~/.bashrc
+
+  echo "------------------------------------------------------------------"
+
+}
+
+################################# deploy worker ################################
+function deploy_worker () {
+  echo - deploy worker
+
+  # Stopping and disabling firewalld & SELinux
+  systemctl stop firewalld; systemctl disable firewalld
+  setenforce 0
+  sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+
+  echo install packages
+  yum install -y zstd nfs-utils iptables skopeo container-selinux iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils
+
+  # Mount from Build server
+  mkdir /opt/rancher
+  mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
+
+  #base
+
+  # Setting up Kubernetes Master using RKE2
+  mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images 
+  cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
+
+cat << EOF >  /etc/rancher/rke2/config.yaml
+server: https://MASTERIP1:9345
+token: pkls-secret
+node-label:
+- "region=worker"
+EOF
+
   # check for mount point
-  if [ ! -f /opt/rancher/token ]; then echo " -$RED Did you mount the volume from the first node?$NO_COLOR"; exit 1; fi
+  #if [ ! -f /opt/rancher/token ]; then echo " -$RED Did you mount the volume from the first node?$NO_COLOR"; exit 1; fi
 
-  # base bits
-  base
-
-  export token=$(cat /opt/rancher/token)
-  export server=$(mount |grep rancher | awk -F: '{print $1}')
+  #export token=$(cat /opt/rancher/token)
+  #export server=$(mount |grep rancher | awk -F: '{print $1}')
 
   # setup RKE2
   mkdir -p /etc/rancher/rke2/
@@ -343,7 +630,7 @@ function deploy_worker () {
   INSTALL_RKE2_ARTIFACT_PATH=/opt/rancher/rke2_"$RKE_VERSION" INSTALL_RKE2_TYPE=agent sh /opt/rancher/rke2_"$RKE_VERSION"/install.sh 
   yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
 
-  rsync -avP /opt/rancher/images/registry/registry.tar /var/lib/rancher/rke2/agent/images/
+  #rsync -avP /opt/rancher/images/registry/registry.tar /var/lib/rancher/rke2/agent/images/
   
   systemctl enable --now rke2-agent.service
 }
@@ -434,7 +721,9 @@ function usage () {
 
 case "$1" in
         build ) build;;
-        control) deploy_control;;
+        lbsetup ) lbsetup;;
+        control1) deploy_control1;;
+        control23) deploy_control23;;
         worker) deploy_worker;;
         neuvector) neuvector;;
         longhorn) longhorn;;
@@ -443,4 +732,3 @@ case "$1" in
         validate) validate;;
         *) usage;;
 esac
-
