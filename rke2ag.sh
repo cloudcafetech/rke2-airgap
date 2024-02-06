@@ -48,12 +48,12 @@ function build () {
   mkdir -p /root/registry/data/auth
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
    OS=Ubuntu
-   apt install -y apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils
+   apt install -y apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix ldap-utils haproxy apparmor 
   else
    # el version
    export EL=$(rpm -q --queryformat '%{RELEASE}' rpm | grep -o "el[[:digit:]]")
    chcon system_u:object_r:container_file_t:s0 /root/registry/data
-   yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools zip unzip go nmap telnet dos2unix zstd nfs-utils iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils skopeo
+   yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools haproxy zip unzip go nmap telnet dos2unix zstd nfs-utils iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils skopeo
   fi
 
   echo - "Install docker, crane & setup docker private registry"
@@ -186,13 +186,7 @@ EOF
   crane copy registry:latest localhost:5000/registry:latest
   crane copy debian:9 localhost:5000/debian:9
   crane copy k8s.gcr.io/addon-resizer:1.7 localhost:5000/addon-resizer:1.7
-
-  echo - load images for Monitoring Logging Auth Dashboard Nginx
-  for i in $(cat /opt/rancher/images/others/other-images.txt); do
-    img=$(echo $i | cut -d'/' -f3)
-    pkg=$(echo $i | cut -d'/' -f2)
-    crane copy $i localhost:5000/$pkg/$img
-  done
+  crane copy prom/alertmanager:v0.16.2 localhost:5000/prometheus/alertmanager:v0.16.0
 
   echo - Load images for Longhorn
   for i in $(cat /opt/rancher/images/longhorn/longhorn-images.txt); do
@@ -219,6 +213,13 @@ EOF
   for i in $(cat /opt/rancher/images/rancher/rancher-images.txt); do
     img=$(echo $i | cut -d'/' -f2)
     pkg=$(echo $i | cut -d'/' -f1)
+    crane copy $i localhost:5000/$pkg/$img
+  done
+
+  echo - load images for Monitoring Logging Auth Dashboard Nginx
+  for i in $(cat /opt/rancher/images/others/other-images.txt); do
+    img=$(echo $i | cut -d'/' -f3)
+    pkg=$(echo $i | cut -d'/' -f2)
     crane copy $i localhost:5000/$pkg/$img
   done
 
@@ -251,7 +252,7 @@ EOF
 function lbsetup () {
 
   echo - Configuring HAProxy Server
-  yum install haproxy -y 
+  #yum install haproxy -y 
 
 cat <<EOF > /etc/haproxy/haproxy.cfg
 # Global settings
