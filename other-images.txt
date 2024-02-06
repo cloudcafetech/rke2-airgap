@@ -1,0 +1,17 @@
+docker.io/grafana/loki:2.0.0-amd64
+docker.io/grafana/fluent-bit-plugin-loki:0.1
+docker.io/grafana/fluent-bit-plugin-loki:latest
+docker.io/grafana/grafana:8.5.13
+docker.io/grafana/promtail:2.8.3
+quay.io/prometheus/alertmanager:v0.16.0
+quay.io/coreos/kube-state-metrics:v1.9.6
+quay.io/prometheus/node-exporter:v0.18.1
+quay.io/prometheus/prometheus:v2.19.1
+docker.io/kubernetesui/dashboard:v2.7.0
+docker.io/kubernetesui/metrics-scraper:v1.0.8
+quay.io/oauth2-proxy/oauth2-proxy:latest
+ghcr.io/dexidp/dex:v2.30.0
+gcr.io/heptio-images/gangway:v3.2.0
+registry.k8s.io/ingress-nginx/controller:v1.8.2@sha256:74834d3d25b336b62cabeb8bf7f1d788706e2cf1cfd64022de4137ade8881ff2
+registry.k8s.io/ingress-nginx/kube-webhook-certgen:v20230407@sha256:543c40fd093964bc9ab509d3e791f9989963021f1e9e4c9c7b6700b02bfb227b
+registry.k8s.io/ingress-nginx/kube-webhook-certgen:v20230407@sha256:543c40fd093964bc9ab509d3e791f9989963021f1e9e4c9c7b6700b02bfb227b
