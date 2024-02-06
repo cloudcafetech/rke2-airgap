@@ -59,9 +59,9 @@ function build () {
   if ! command -v docker &> /dev/null;
   then
     echo "Trying to Install Docker..."
-    dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
-    dnf install docker-ce --nobest --allowerasing -y
-    #curl -s https://releases.rancher.com/install-docker/19.03.sh | sh
+    #dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+    #dnf install docker-ce --nobest --allowerasing -y
+    curl -s https://releases.rancher.com/install-docker/19.03.sh | sh
   fi 
   systemctl start docker; systemctl enable docker
 
@@ -81,7 +81,7 @@ function build () {
   fi
 
   PR=`docker ps -a -q -f name=private-registry`
-  if [ $PR == " " ]; then
+  if [[ $PR == "" ]]; then
     docker run -itd -p 5000:5000 --restart=always --name private-registry -v /root/registry/data/auth:/auth -v /root/registry/data:/var/lib/registry \
     -e "REGISTRY_AUTH=htpasswd" \
     -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
