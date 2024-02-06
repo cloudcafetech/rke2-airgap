@@ -3,7 +3,6 @@ docker.io/grafana/fluent-bit-plugin-loki:0.1
 docker.io/grafana/fluent-bit-plugin-loki:latest
 docker.io/grafana/grafana:8.5.13
 docker.io/grafana/promtail:2.8.3
-quay.io/prometheus/alertmanager:v0.16.0
 quay.io/coreos/kube-state-metrics:v1.9.6
 quay.io/prometheus/node-exporter:v0.18.1
 quay.io/prometheus/prometheus:v2.19.1
