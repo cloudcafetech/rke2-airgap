@@ -53,11 +53,17 @@ echo -e "- installed ""$GREEN""ok" "$NO_COLOR"
 function build () {
   
   echo - Installing packages
-  yum install -y git curl wget openldap openldap-clients openldap-servers bind-utils jq httpd-tools zip unzip go nmap telnet dos2unix zstd nfs-utils iptables skopeo container-selinux iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils
+  yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools zip unzip go nmap telnet dos2unix zstd nfs-utils iptables skopeo iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils
 
-  echo - Install docker, crane & setup docker private registry
-  curl -s https://releases.rancher.com/install-docker/19.03.sh | sh
-  systemctl start docker; systemctl status docker; systemctl enable docker
+  echo - "Install docker, crane & setup docker private registry"
+  if ! command -v docker &> /dev/null;
+  then
+    echo "Trying to Install Docker..."
+    dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+    dnf install docker-ce --nobest --allowerasing -y
+    #curl -s https://releases.rancher.com/install-docker/19.03.sh | sh
+  fi 
+  systemctl start docker; systemctl enable docker
 
   curl -sL "https://github.com/google/go-containerregistry/releases/download/v0.19.0/go-containerregistry_Linux_x86_64.tar.gz" > go-containerregistry.tar.gz
   tar -zxvf go-containerregistry.tar.gz -C /usr/local/bin/ crane
@@ -68,20 +74,20 @@ function build () {
   echo - Private Registry Setup
   mkdir -p /root/registry/data/auth
   chcon system_u:object_r:container_file_t:s0 /root/registry/data
-  docker run --name htpass --entrypoint htpasswd httpd:2 -Bbn admin admin@2675 > /root/registry/data/auth/htpasswd  
-  docker rm htpass
-  #docker run -itd -p 5000:5000 --name private-registry --restart=always -v /root/registry/data:/var/lib/registry registry
-  docker run -itd \
-  -p 5000:5000 \
-  --restart=always \
-  --name private-registry \
-  -v /root/registry/data/auth:/auth \
-  -v /root/registry/data:/var/lib/registry \
-  -e "REGISTRY_AUTH=htpasswd" \
-  -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
-  -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
-  registry
 
+  if ! test -f /root/registry/data/auth/htpasswd; then
+    docker run --name htpass --entrypoint htpasswd httpd:2 -Bbn admin admin@2675 > /root/registry/data/auth/htpasswd  
+    docker rm htpass
+  fi
+
+  docker ps -a -q -f name=private-registry
+  if [ $? -eq 0 ]; then
+    docker run -itd -p 5000:5000 --restart=always --name private-registry -v /root/registry/data/auth:/auth -v /root/registry/data:/var/lib/registry \
+    -e "REGISTRY_AUTH=htpasswd" \
+    -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
+    -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+    registry
+  fi
 
 cat <<EOF > /opt/rancher/rke2_$RKE_VERSION/registries.yaml
 mirrors:
@@ -169,48 +175,76 @@ EOF
  # get images
   echo - skopeo - cert-manager
   for i in $(cat cert/cert-manager-images.txt); do 
-    skopeo copy --additional-tag $i docker://"$i" docker-archive:cert/"$(echo "$i"| awk -F/ '{print $3}'|sed 's/:/_/g')".tar:"$(echo "$i"| awk -F/ '{print $3}')" > /dev/null 2>&1
+    skopeo inspect docker-archive:cert/"$(echo "$i"| awk -F/ '{print $3}'|sed 's/:/_/g')".tar:"$(echo "$i"| awk -F/ '{print $3}')" > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+     skopeo copy --additional-tag $i docker://"$i" docker-archive:cert/"$(echo "$i"| awk -F/ '{print $3}'|sed 's/:/_/g')".tar:"$(echo "$i"| awk -F/ '{print $3}')" > /dev/null 2>&1
+    fi
   done
 
   echo - skopeo - Neuvector
   for i in $(cat neuvector/neuvector-images.txt); do 
-    skopeo copy --additional-tag $i docker://"$i" docker-archive:neuvector/"$(echo "$i"| awk -F/ '{print $3}'|sed 's/:/_/g')".tar:"$(echo "$i"| awk -F/ '{print $3}')" > /dev/null 2>&1
+    skopeo inspect docker-archive:neuvector/"$(echo "$i"| awk -F/ '{print $3}'|sed 's/:/_/g')".tar:"$(echo "$i"| awk -F/ '{print $3}')" > /dev/null
+    if [ $? -ne 0 ]; then
+     skopeo copy --additional-tag $i docker://"$i" docker-archive:neuvector/"$(echo "$i"| awk -F/ '{print $3}'|sed 's/:/_/g')".tar:"$(echo "$i"| awk -F/ '{print $3}')" > /dev/null 2>&1
+    fi
   done
 
   echo - skopeo - longhorn
   for i in $(cat longhorn/longhorn-images.txt); do 
-    skopeo copy --additional-tag $i docker://"$i" docker-archive:longhorn/"$(echo "$i"| awk -F/ '{print $2}'|sed 's/:/_/g')".tar:"$(echo "$i"| awk -F/ '{print $2}')" > /dev/null 2>&1
+    skopeo inspect docker-archive:longhorn/"$(echo "$i"| awk -F/ '{print $2}'|sed 's/:/_/g')".tar:"$(echo "$i"| awk -F/ '{print $2}')" > /dev/null 
+    if [ $? -ne 0 ]; then
+     skopeo copy --additional-tag $i docker://"$i" docker-archive:longhorn/"$(echo "$i"| awk -F/ '{print $2}'|sed 's/:/_/g')".tar:"$(echo "$i"| awk -F/ '{print $2}')" > /dev/null 2>&1
+    fi
   done
 
   echo - skopeo - Rancher - be patient...
   for i in $(cat rancher/rancher-images.txt); do 
-    skopeo copy --additional-tag $i docker://"$i" docker-archive:rancher/"$(echo "$i"| awk -F/ '{print $2}'|sed 's/:/_/g')".tar:"$(echo "$i"| awk -F/ '{print $2}')" > /dev/null 2>&1
+    skopeo inspect docker-archive:rancher/"$(echo "$i"| awk -F/ '{print $2}'|sed 's/:/_/g')".tar:"$(echo "$i"| awk -F/ '{print $2}')" > /dev/null
+    if [ $? -ne 0 ]; then
+     skopeo copy --additional-tag $i docker://"$i" docker-archive:rancher/"$(echo "$i"| awk -F/ '{print $2}'|sed 's/:/_/g')".tar:"$(echo "$i"| awk -F/ '{print $2}')" > /dev/null 2>&1
+    fi
   done
 
-  # add flask app and yaml and registry
-  skopeo copy --additional-tag registry:latest docker://registry:latest docker-archive:registry/registry.tar > /dev/null 2>&1
-  skopeo copy --additional-tag redis:latest docker://redis docker-archive:flask/redis.tar > /dev/null 2>&1
-  skopeo copy --additional-tag mongo:latest docker://mongo docker-archive:flask/mongo.tar > /dev/null 2>&1
-  skopeo copy --additional-tag clemenko/flask_simple:latest docker://clemenko/flask_simple docker-archive:flask/flask_simple.tar > /dev/null 2>&1
+  echo - skopeo add flask app and yaml and registry
+  skopeo inspect docker-archive:registry/registry.tar > /dev/null
+  if [ $? -ne 0 ]; then
+    skopeo copy --additional-tag registry:latest docker://registry:latest docker-archive:registry/registry.tar > /dev/null 2>&1
+  fi
+  skopeo inspect docker-archive:flask/redis.tar > /dev/null
+  if [ $? -ne 0 ]; then
+    skopeo copy --additional-tag redis:latest docker://redis docker-archive:flask/redis.tar > /dev/null 2>&1
+  fi
+  skopeo inspect docker-archive:flask/mongo.tar > /dev/null
+  if [ $? -ne 0 ]; then
+   skopeo copy --additional-tag mongo:latest docker://mongo docker-archive:flask/mongo.tar > /dev/null 2>&1
+  fi
+  skopeo inspect docker-archive:flask/flask_simple.tar > /dev/null
+  if [ $? -ne 0 ]; then
+   skopeo copy --additional-tag clemenko/flask_simple:latest docker://clemenko/flask_simple docker-archive:flask/flask_simple.tar > /dev/null 2>&1
+  fi
   curl -#L https://raw.githubusercontent.com/clemenko/rke_airgap_install/main/flask.yaml -o /opt/rancher/images/flask/flask.yaml > /dev/null 2>&1
 
-  echo - load images
+  echo - load images for longhorn
   for file in $(ls /opt/rancher/images/longhorn/ | grep -v txt ); do 
     skopeo copy docker-archive:/opt/rancher/images/longhorn/"$file" docker://"$(echo "$file" | sed 's/.tar//g' | awk -F_ '{print "localhost:5000/longhornio/"$1":"$2}')" --dest-tls-verify=false
   done
 
+  echo - load images for CertManager
   for file in $(ls /opt/rancher/images/cert/ | grep -v txt ); do 
     skopeo copy docker-archive:/opt/rancher/images/cert/"$file" docker://"$(echo "$file" | sed 's/.tar//g' | awk -F_ '{print "localhost:5000/cert/"$1":"$2}')" --dest-tls-verify=false
   done
 
+  echo - load images for Neuvector
   for file in $(ls /opt/rancher/images/neuvector/ | grep -v txt ); do 
     skopeo copy docker-archive:/opt/rancher/images/neuvector/"$file" docker://"$(echo "$file" | sed 's/.tar//g' | awk -F_ '{print "localhost:5000/neuvector/"$1":"$2}')" --dest-tls-verify=false
   done
 
+  echo - load images for Rancher
   for file in $(ls /opt/rancher/images/rancher/ | grep -v txt ); do 
     skopeo copy docker-archive:/opt/rancher/images/rancher/"$file" docker://"$(echo "$file" | sed 's/.tar//g' | awk -F_ '{print "localhost:5000/rancher/"$1":"$2}')" --dest-tls-verify=false
   done
 
+  echo - load images for Flask
   for file in $(ls /opt/rancher/images/flask/ | grep -v yaml ); do 
      skopeo copy docker-archive:/opt/rancher/images/flask/"$file" docker://"$(echo "$file" | sed 's/.tar//g' | awk '{print "localhost:5000/flask/"$1}')" --dest-tls-verify=false
   done
@@ -222,7 +256,9 @@ EOF
 
   cd /opt/rancher/
   echo - compress all the things
-  tar -I zstd -vcf /opt/rke2_rancher_longhorn.zst $(ls) > /dev/null 2>&1
+  if ! test -f /opt/rke2_rancher_longhorn.zst; then
+   tar -I zstd -vcf /opt/rke2_rancher_longhorn.zst $(ls) > /dev/null 2>&1
+  fi
 
   echo - Setup nfs
   # share out opt directory
