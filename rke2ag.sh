@@ -41,14 +41,20 @@ export NO_COLOR='\x1b[0m'
 
 export PATH=$PATH:/usr/local/bin
 
-# el version
-export EL=$(rpm -q --queryformat '%{RELEASE}' rpm | grep -o "el[[:digit:]]")
-
 ################################# build ################################
 function build () {
   
   echo - Installing packages
-  #yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools zip unzip go nmap telnet dos2unix zstd nfs-utils iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils
+  mkdir -p /root/registry/data/auth
+  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   OS=Ubuntu
+   apt install -y apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils
+  else
+   # el version
+   export EL=$(rpm -q --queryformat '%{RELEASE}' rpm | grep -o "el[[:digit:]]")
+   chcon system_u:object_r:container_file_t:s0 /root/registry/data
+   yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools zip unzip go nmap telnet dos2unix zstd nfs-utils iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils skopeo
+  fi
 
   echo - "Install docker, crane & setup docker private registry"
   if ! command -v docker &> /dev/null;
@@ -71,14 +77,6 @@ function build () {
   cd /opt/rancher/rke2_$RKE_VERSION/
 
   echo - Private Registry Setup
-  mkdir -p /root/registry/data/auth
-
-  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
-   OS=Ubuntu
-  else
-   chcon system_u:object_r:container_file_t:s0 /root/registry/data
-  fi
-
   if ! test -f /root/registry/data/auth/htpasswd; then
     docker run --name htpass --entrypoint htpasswd httpd:2 -Bbn admin admin@2675 > /root/registry/data/auth/htpasswd  
     docker rm htpass
@@ -177,7 +175,7 @@ EOF
   helm template /opt/rancher/helm/core-$NEU_VERSION.tgz | awk '$1 ~ /image:/ {print $2}' | sed -e 's/\"//g' > neuvector/neuvector-images.txt
 
   echo - other image list
-  curl -#L https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/other-images.txt -o other/other-images.txt
+  curl -#L https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/other-images.txt -o others/other-images.txt
 
   echo - Login docker for upload images
   docker login -u admin -p admin@2675 localhost:5000
@@ -189,38 +187,38 @@ EOF
   crane copy debian:9 localhost:5000/debian:9
   crane copy k8s.gcr.io/addon-resizer:1.7 localhost:5000/addon-resizer:1.7
 
-  echo - Load images for longhorn
-  for i in $(/opt/rancher/images/longhorn/longhorn-images.txt); do
+  echo - load images for Monitoring Logging Auth Dashboard Nginx
+  for i in $(cat /opt/rancher/images/others/other-images.txt); do
+    img=$(echo $i | cut -d'/' -f3)
+    pkg=$(echo $i | cut -d'/' -f2)
+    crane copy $i localhost:5000/$pkg/$img
+  done
+
+  echo - Load images for Longhorn
+  for i in $(cat /opt/rancher/images/longhorn/longhorn-images.txt); do
     img=$(echo $i | cut -d'/' -f2)
     pkg=$(echo $i | cut -d'/' -f1)
     crane copy $i localhost:5000/$pkg/$img
   done
 
   echo - load images for CertManager
-  for i in $(/opt/rancher/images/cert/cert-manager-images.txt); do
+  for i in $(cat /opt/rancher/images/cert/cert-manager-images.txt); do
     img=$(echo $i | cut -d'/' -f3)
     pkg=$(echo $i | cut -d'/' -f2)
     crane copy $i localhost:5000/$pkg/$img
   done
 
   echo - load images for Neuvector
-  for i in $(/opt/rancher/images/neuvector/neuvector-images.txt); do
+  for i in $(cat /opt/rancher/images/neuvector/neuvector-images.txt); do
     img=$(echo $i | cut -d'/' -f3)
     pkg=$(echo $i | cut -d'/' -f2)
     crane copy $i localhost:5000/$pkg/$img
   done
 
   echo - load images for Rancher
-  for i in $(/opt/rancher/images/rancher/rancher-images.txt); do
+  for i in $(cat /opt/rancher/images/rancher/rancher-images.txt); do
     img=$(echo $i | cut -d'/' -f2)
     pkg=$(echo $i | cut -d'/' -f1)
-    crane copy $i localhost:5000/$pkg/$img
-  done
-
-  echo - load images for Monitoring Logging Auth Dashboard Nginx
-  for i in $(/opt/rancher/images/other/other-images.txt); do
-    img=$(echo $i | cut -d'/' -f3)
-    pkg=$(echo $i | cut -d'/' -f2)
     crane copy $i localhost:5000/$pkg/$img
   done
 
