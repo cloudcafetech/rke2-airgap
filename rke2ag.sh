@@ -72,7 +72,12 @@ function build () {
 
   echo - Private Registry Setup
   mkdir -p /root/registry/data/auth
-  chcon system_u:object_r:container_file_t:s0 /root/registry/data
+
+  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   OS=Ubuntu
+  else
+   chcon system_u:object_r:container_file_t:s0 /root/registry/data
+  fi
 
   if ! test -f /root/registry/data/auth/htpasswd; then
     docker run --name htpass --entrypoint htpasswd httpd:2 -Bbn admin admin@2675 > /root/registry/data/auth/htpasswd  
