@@ -53,7 +53,7 @@ echo -e "- installed ""$GREEN""ok" "$NO_COLOR"
 function build () {
   
   echo - Installing packages
-  yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools zip unzip go nmap telnet dos2unix zstd nfs-utils iptables skopeo iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils
+  yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools zip unzip go nmap telnet dos2unix zstd nfs-utils iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils
 
   echo - "Install docker, crane & setup docker private registry"
   if ! command -v docker &> /dev/null;
@@ -80,8 +80,8 @@ function build () {
     docker rm htpass
   fi
 
-  docker ps -a -q -f name=private-registry
-  if [ $? -eq 0 ]; then
+  PR=`docker ps -a -q -f name=private-registry`
+  if [ $PR == " " ]; then
     docker run -itd -p 5000:5000 --restart=always --name private-registry -v /root/registry/data/auth:/auth -v /root/registry/data:/var/lib/registry \
     -e "REGISTRY_AUTH=htpasswd" \
     -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
