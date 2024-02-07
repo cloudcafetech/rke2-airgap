@@ -116,14 +116,92 @@ EOF
   echo - get the install script
   curl -sfL https://get.rke2.io -o install.sh
 
-  echo - Get Helm Charts
-  cd /opt/rancher/helm/
+  echo - Checking helm 
+  if ! command -v helm &> /dev/null;
+  then
+   echo - Get Helm Charts
+   cd /opt/rancher/helm/
+   echo - get helm
+   curl -#LO https://get.helm.sh/helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
+   tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
+   mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
+   rm -rf linux-amd64 > /dev/null 2>&1
+  fi
 
-  echo - get helm
-  curl -#LO https://get.helm.sh/helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
-  tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
-  mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
-  rm -rf linux-amd64 > /dev/null 2>&1
+  echo - Setup nfs
+  # share out opt directory
+  echo "/opt/rancher *(ro)" > /etc/exports
+  systemctl enable nfs-server.service && systemctl start nfs-server.service
+
+  cd /opt/rancher/
+  echo - compress all the things
+  if ! test -f /opt/rke2_rancher_longhorn.zst; then
+   tar -I zstd -vcf /opt/rke2_rancher_longhorn.zst $(ls) > /dev/null 2>&1
+  fi
+
+  # look at adding encryption - https://medium.com/@lumjjb/encrypting-container-images-with-skopeo-f733afb1aed4  
+
+  echo "------------------------------------------------------------------"
+  echo " to uncompress : "
+  echo "   yum install -y zstd"
+  echo "   mkdir /opt/rancher"
+  echo "   tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher"
+  echo "------------------------------------------------------------------"
+
+}
+
+################################# Image Upload ################################
+function imageload () {
+
+  echo - "Check & Install docker, crane & setup docker Private Registry"
+  if ! command -v docker &> /dev/null;
+  then
+    echo "Trying to Install Docker..."
+    curl -s https://releases.rancher.com/install-docker/19.03.sh | sh
+    systemctl start docker; systemctl enable docker
+  fi 
+  systemctl restart docker
+
+  if ! command -v crane &> /dev/null;
+  then
+    echo "Trying to Install Crane..."
+    curl -sL "https://github.com/google/go-containerregistry/releases/download/v0.19.0/go-containerregistry_Linux_x86_64.tar.gz" > go-containerregistry.tar.gz
+    tar -zxvf go-containerregistry.tar.gz -C /usr/local/bin/ crane
+  fi 
+
+  mkdir -p /root/registry/data/auth
+  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   OS=Ubuntu
+  else
+   chcon system_u:object_r:container_file_t:s0 /root/registry/data
+  fi
+
+  echo - Private Registry Setup
+  if ! test -f /root/registry/data/auth/htpasswd; then
+    docker run --name htpass --entrypoint htpasswd httpd:2 -Bbn admin admin@2675 > /root/registry/data/auth/htpasswd  
+    docker rm htpass
+  fi
+
+  PR=`docker ps -a -q -f name=private-registry`
+  if [[ $PR == "" ]]; then
+    docker run -itd -p 5000:5000 --restart=always --name private-registry -v /root/registry/data/auth:/auth -v /root/registry/data:/var/lib/registry \
+    -e "REGISTRY_AUTH=htpasswd" \
+    -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
+    -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+    registry
+  fi
+
+  echo - Checking helm 
+  if ! command -v helm &> /dev/null;
+  then
+   echo - Get Helm Charts
+   cd /opt/rancher/helm/
+   echo - get helm
+   curl -#LO https://get.helm.sh/helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
+   tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
+   mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
+   rm -rf linux-amd64 > /dev/null 2>&1
+  fi
 
   echo - add repos
   helm repo add jetstack https://charts.jetstack.io --force-update > /dev/null 2>&1
@@ -138,6 +216,7 @@ EOF
   helm pull neuvector/core --version $NEU_VERSION > /dev/null 2>&1
 
   echo - Get Images - Rancher/Longhorn
+  mkdir -p /opt/rancher/{rke2_$RKE_VERSION,helm} /opt/rancher/images/{cert,rancher,longhorn,registry,flask,neuvector,others}
 
   echo - create image dir
   cd /opt/rancher/images/
@@ -225,26 +304,6 @@ EOF
 
   # Verify Image upload
   crane catalog localhost:5000
-
-  cd /opt/rancher/
-  echo - compress all the things
-  if ! test -f /opt/rke2_rancher_longhorn.zst; then
-   tar -I zstd -vcf /opt/rke2_rancher_longhorn.zst $(ls) > /dev/null 2>&1
-  fi
-
-  echo - Setup nfs
-  # share out opt directory
-  echo "/opt/rancher *(ro)" > /etc/exports
-  systemctl enable nfs-server.service && systemctl start nfs-server.service
-
-  # look at adding encryption - https://medium.com/@lumjjb/encrypting-container-images-with-skopeo-f733afb1aed4  
-
-  echo "------------------------------------------------------------------"
-  echo " to uncompress : "
-  echo "   yum install -y zstd"
-  echo "   mkdir /opt/rancher"
-  echo "   tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher"
-  echo "------------------------------------------------------------------"
 
 }
 
@@ -619,9 +678,10 @@ function usage () {
   echo ""
   echo "-------------------------------------------------"
   echo ""
-  echo " Usage: $0 {build | lbsetup | control1 | control23 | worker}"
+  echo " Usage: $0 {build | imageload | lbsetup | control1 | control23 | worker}"
   echo ""
   echo " $0 build # Setup Build Server"
+  echo " $0 imageload # Upload Images in Private Registry"
   echo " $0 lbsetup # Setup LB (HAPROXY) Server"
   echo " $0 control1 # Deploy 1st Master Server"
   echo " $0 control23 # Deploy 2nd & 3rd Master Server"
@@ -637,6 +697,7 @@ function usage () {
 
 case "$1" in
         build ) build;;
+        imageload ) imageload;;
         lbsetup ) lbsetup;;
         control1) deploy_control1;;
         control23) deploy_control23;;
