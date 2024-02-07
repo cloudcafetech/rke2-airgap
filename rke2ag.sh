@@ -254,6 +254,12 @@ function lbsetup () {
   echo - Configuring HAProxy Server
   #yum install haproxy -y 
 
+  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   apt install -y haproxy  
+  else
+   yum install -y haproxy 
+  fi
+
 cat <<EOF > /etc/haproxy/haproxy.cfg
 # Global settings
 #---------------------------------------------------------------------
@@ -345,79 +351,46 @@ backend rke2_https_ingress_backend
     server      $INFRADNS2 $INFRAIP2:443 check
 EOF
 
-setsebool -P haproxy_connect_any 1
-systemctl start haproxy;systemctl enable haproxy
-
-firewall-cmd --add-port=6443/tcp --permanent
-firewall-cmd --add-port=443/tcp --permanent
-firewall-cmd --add-service=http --permanent
-firewall-cmd --add-service=https --permanent
-firewall-cmd --add-port=9000/tcp --permanent
-firewall-cmd --reload
+  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   systemctl start haproxy;systemctl enable haproxy
+  else
+   setsebool -P haproxy_connect_any 1
+   systemctl start haproxy;systemctl enable haproxy
+   firewall-cmd --add-port=6443/tcp --permanent
+   firewall-cmd --add-port=443/tcp --permanent
+   firewall-cmd --add-service=http --permanent
+   firewall-cmd --add-service=https --permanent
+   firewall-cmd --add-port=9000/tcp --permanent
+   firewall-cmd --reload 
+  fi
 
 }
 
 ################################# base ################################
 function base () {
-  # install all the base bits.
+# install all the base bits.
 
-  echo " updating kernel settings"
-  cat << EOF >> /etc/sysctl.conf
-# SWAP settings
-vm.swappiness=0
-vm.panic_on_oom=0
-vm.overcommit_memory=1
-kernel.panic=10
-kernel.panic_on_oops=1
-vm.max_map_count = 262144
+### For Debian distribution
+if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+ apt update -y
+ apt install apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils -y
+ # Stopping and disabling firewalld by running the commands on all servers
+ systemctl stop ufw
+ systemctl stop apparmor.service
+ systemctl disable --now ufw
+ systemctl disable --now apparmor.service 
+### For Redhat distribution
+else
+ # Stopping and disabling firewalld & SELinux
+ systemctl stop firewalld; systemctl disable firewalld
+ setenforce 0
+ sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+ yum install -y git curl wget bind-utils jq httpd-tools zip unzip nfs-utils go nmap telnet dos2unix zstd container-selinux libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils iptables skopeo
+ yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
+ #systemctl enable --now iscsid
+ #echo -e "[keyfile]\nunmanaged-devices=interface-name:cali*;interface-name:flannel*" > /etc/NetworkManager/conf.d/rke2-canal.conf
+fi
 
-# Have a larger connection range available
-net.ipv4.ip_local_port_range=1024 65000
-
-# Increase max connection
-net.core.somaxconn=10000
-
-# Reuse closed sockets faster
-net.ipv4.tcp_tw_reuse=1
-net.ipv4.tcp_fin_timeout=15
-
-# The maximum number of "backlogged sockets".  Default is 128.
-net.core.somaxconn=4096
-net.core.netdev_max_backlog=4096
-
-# 16MB per socket - which sounds like a lot,
-# but will virtually never consume that much.
-net.core.rmem_max=16777216
-net.core.wmem_max=16777216
-
-# Various network tunables
-net.ipv4.tcp_max_syn_backlog=20480
-net.ipv4.tcp_max_tw_buckets=400000
-net.ipv4.tcp_no_metrics_save=1
-net.ipv4.tcp_rmem=4096 87380 16777216
-net.ipv4.tcp_syn_retries=2
-net.ipv4.tcp_synack_retries=2
-net.ipv4.tcp_wmem=4096 65536 16777216
-
-# ARP cache settings for a highly loaded docker swarm
-net.ipv4.neigh.default.gc_thresh1=8096
-net.ipv4.neigh.default.gc_thresh2=12288
-net.ipv4.neigh.default.gc_thresh3=16384
-
-# ip_forward and tcp keepalive for iptables
-net.ipv4.tcp_keepalive_time=600
-net.ipv4.ip_forward=1
-
-# monitor file system events
-fs.inotify.max_user_instances=8192
-fs.inotify.max_user_watches=1048576
-EOF
-sysctl -p > /dev/null 2>&1
-
-  echo install packages
-  yum install -y zstd nfs-utils iptables skopeo container-selinux iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils
-  systemctl enable --now iscsid
-  echo -e "[keyfile]\nunmanaged-devices=interface-name:cali*;interface-name:flannel*" > /etc/NetworkManager/conf.d/rke2-canal.conf
 }
 
 ################################# Deploy Master 1 ################################
@@ -426,19 +399,11 @@ function deploy_control1 () {
   # mkdir /opt/rancher
   # tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher
 
-  # Stopping and disabling firewalld & SELinux
-  systemctl stop firewalld; systemctl disable firewalld
-  setenforce 0
-  sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
-
-  echo install packages
-  yum install -y zstd nfs-utils iptables skopeo container-selinux iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils
-
   # Mount from Build server
   mkdir /opt/rancher
   mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
 
-  #base
+  base
 
   # Setting up Kubernetes Master using RKE2
   mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images 
@@ -466,23 +431,16 @@ disable:
   - rke2-snapshot-validation-webhook
 #  - rke2-coredns
 #  - rke2-metrics-server
+#node-taint:
+  #- "CriticalAddonsOnly=true:NoExecute"
 EOF
 
   echo - Install rke2
   cd /opt/rancher/rke2_$RKE_VERSION
 
-  # set up audit policy file
-  #echo -e "apiVersion: audit.k8s.io/v1\nkind: Policy\nrules:\n- level: RequestResponse" > /etc/rancher/rke2/audit-policy.yaml
-
-  # set up ssl passthrough for nginx
-  #echo -e "---\napiVersion: helm.cattle.io/v1\nkind: HelmChartConfig\nmetadata:\n  name: rke2-ingress-nginx\n  namespace: kube-system\nspec:\n  valuesContent: |-\n    controller:\n      config:\n        use-forwarded-headers: true\n      extraArgs:\n        enable-ssl-passthrough: true" > /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx-config.yaml
-
-  # pre-load registry image
-  #rsync -avP /opt/rancher/images/registry/registry.tar /var/lib/rancher/rke2/agent/images/
-
  # insall rke2 - stig'd
   INSTALL_RKE2_ARTIFACT_PATH=/opt/rancher/rke2_"$RKE_VERSION" sh /opt/rancher/rke2_"$RKE_VERSION"/install.sh 
-  yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
+  #yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
   systemctl enable --now rke2-server.service
 
   sleep 30
@@ -521,19 +479,11 @@ function deploy_control23 () {
   # mkdir /opt/rancher
   # tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher
 
-  # Stopping and disabling firewalld & SELinux
-  systemctl stop firewalld; systemctl disable firewalld
-  setenforce 0
-  sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
-
-  echo install packages
-  yum install -y zstd nfs-utils iptables skopeo container-selinux iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils
-
   # Mount from Build server
   mkdir /opt/rancher
   mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
 
-  #base
+  base
 
   # Setting up Kubernetes Master using RKE2
   mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images 
@@ -560,18 +510,9 @@ EOF
   echo - Install rke2
   cd /opt/rancher/rke2_$RKE_VERSION
 
-  # set up audit policy file
-  #echo -e "apiVersion: audit.k8s.io/v1\nkind: Policy\nrules:\n- level: RequestResponse" > /etc/rancher/rke2/audit-policy.yaml
-
-  # set up ssl passthrough for nginx
-  #echo -e "---\napiVersion: helm.cattle.io/v1\nkind: HelmChartConfig\nmetadata:\n  name: rke2-ingress-nginx\n  namespace: kube-system\nspec:\n  valuesContent: |-\n    controller:\n      config:\n        use-forwarded-headers: true\n      extraArgs:\n        enable-ssl-passthrough: true" > /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx-config.yaml
-
-  # pre-load registry image
-  #rsync -avP /opt/rancher/images/registry/registry.tar /var/lib/rancher/rke2/agent/images/
-
  # insall rke2 - stig'd
   INSTALL_RKE2_ARTIFACT_PATH=/opt/rancher/rke2_"$RKE_VERSION" sh /opt/rancher/rke2_"$RKE_VERSION"/install.sh 
-  yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
+  #yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
   systemctl enable --now rke2-server.service
 
   sleep 30
@@ -598,19 +539,11 @@ EOF
 function deploy_worker () {
   echo - deploy worker
 
-  # Stopping and disabling firewalld & SELinux
-  systemctl stop firewalld; systemctl disable firewalld
-  setenforce 0
-  sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
-
-  echo install packages
-  yum install -y zstd nfs-utils iptables skopeo container-selinux iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils
-
   # Mount from Build server
   mkdir /opt/rancher
   mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
 
-  #base
+  base
 
   # Setting up Kubernetes Master using RKE2
   mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images 
@@ -623,24 +556,15 @@ node-label:
 - "region=worker"
 EOF
 
-  # check for mount point
-  #if [ ! -f /opt/rancher/token ]; then echo " -$RED Did you mount the volume from the first node?$NO_COLOR"; exit 1; fi
-
-  #export token=$(cat /opt/rancher/token)
-  #export server=$(mount |grep rancher | awk -F: '{print $1}')
-
   # setup RKE2
   mkdir -p /etc/rancher/rke2/
-  echo -e "server: https://$LB_IP:9345\ntoken: $token\nwrite-kubeconfig-mode: 0600\n#profile: cis-1.23\nkube-apiserver-arg:\n- \"authorization-mode=RBAC,Node\"\nkubelet-arg:\n- \"protect-kernel-defaults=true\" " > /etc/rancher/rke2/config.yaml
 
   # install rke2
   cd /opt/rancher
   INSTALL_RKE2_ARTIFACT_PATH=/opt/rancher/rke2_"$RKE_VERSION" INSTALL_RKE2_TYPE=agent sh /opt/rancher/rke2_"$RKE_VERSION"/install.sh 
-  yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
-
-  #rsync -avP /opt/rancher/images/registry/registry.tar /var/lib/rancher/rke2/agent/images/
-  
+  #yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
   systemctl enable --now rke2-agent.service
+
 }
 
 ################################# flask ################################
