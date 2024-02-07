@@ -41,112 +41,121 @@ export NO_COLOR='\x1b[0m'
 
 export PATH=$PATH:/usr/local/bin
 
-################################# build ################################
-function build () {
-  
-  echo - Installing packages
-  mkdir -p /root/registry/data/auth
+################################# LB Setup ################################
+function lbsetup () {
+
+  echo - Configuring HAProxy Server
+  #yum install haproxy -y 
+
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
-   OS=Ubuntu
-   apt install -y apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix ldap-utils haproxy apparmor 
+   apt install -y haproxy  
   else
-   # el version
-   export EL=$(rpm -q --queryformat '%{RELEASE}' rpm | grep -o "el[[:digit:]]")
-   chcon system_u:object_r:container_file_t:s0 /root/registry/data
-   yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools haproxy zip unzip go nmap telnet dos2unix zstd nfs-utils iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils skopeo
+   yum install -y haproxy 
   fi
 
-  echo - "Install docker, crane & setup docker private registry"
-  if ! command -v docker &> /dev/null;
-  then
-    echo "Trying to Install Docker..."
-    #dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
-    #dnf install docker-ce --nobest --allowerasing -y
-    curl -s https://releases.rancher.com/install-docker/19.03.sh | sh
-  fi 
-  systemctl start docker; systemctl enable docker
+cat <<EOF > /etc/haproxy/haproxy.cfg
+# Global settings
+#---------------------------------------------------------------------
+global
+    maxconn     20000
+    log         /dev/log local0 info
+    chroot      /var/lib/haproxy
+    pidfile     /var/run/haproxy.pid
+    user        haproxy
+    group       haproxy
+    daemon
+    # turn on stats unix socket
+    stats socket /var/lib/haproxy/stats
+#---------------------------------------------------------------------
+# common defaults that all the 'listen' and 'backend' sections will
+# use if not designated in their block
+#---------------------------------------------------------------------
+defaults
+    log                     global
+    mode                    http
+    option                  httplog
+    option                  dontlognull
+    option http-server-close
+    option redispatch
+    option forwardfor       except 127.0.0.0/8
+    retries                 3
+    maxconn                 20000
+    timeout http-request    10000ms
+    timeout http-keep-alive 10000ms
+    timeout check           10000ms
+    timeout connect         40000ms
+    timeout client          300000ms
+    timeout server          300000ms
+    timeout queue           50000ms
 
-  if ! command -v crane &> /dev/null;
-  then
-    echo "Trying to Install Crane..."
-    curl -sL "https://github.com/google/go-containerregistry/releases/download/v0.19.0/go-containerregistry_Linux_x86_64.tar.gz" > go-containerregistry.tar.gz
-    tar -zxvf go-containerregistry.tar.gz -C /usr/local/bin/ crane
-  fi 
+# Enable HAProxy stats
+listen stats
+    bind :9000
+    stats uri /stats
+    stats refresh 10000ms
 
-  mkdir -p /opt/rancher/{rke2_$RKE_VERSION,helm} /opt/rancher/images/{cert,rancher,longhorn,registry,flask,neuvector,others}
-  cd /opt/rancher/rke2_$RKE_VERSION/
+# RKE2 Supervisor Server
+frontend rke2_supervisor_frontend
+    bind :6443
+    default_backend rke2_supervisor_backend
+    mode tcp
 
-  echo - Private Registry Setup
-  if ! test -f /root/registry/data/auth/htpasswd; then
-    docker run --name htpass --entrypoint htpasswd httpd:2 -Bbn admin admin@2675 > /root/registry/data/auth/htpasswd  
-    docker rm htpass
-  fi
+backend rke2_supervisor_backend
+    mode tcp
+    balance source
+    server      $MASTERDNS1 $MASTERIP1:9345 check
+    server      $MASTERDNS2 $MASTERIP2:9345 check
+    server      $MASTERDNS3 $MASTERIP3:9345 check
 
-  PR=`docker ps -a -q -f name=private-registry`
-  if [[ $PR == "" ]]; then
-    docker run -itd -p 5000:5000 --restart=always --name private-registry -v /root/registry/data/auth:/auth -v /root/registry/data:/var/lib/registry \
-    -e "REGISTRY_AUTH=htpasswd" \
-    -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
-    -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
-    registry
-  fi
+# RKE2 Kube API Server
+frontend rke2_api_frontend
+    bind :6443
+    default_backend rke2_api_backend
+    mode tcp
 
-cat <<EOF > /opt/rancher/rke2_$RKE_VERSION/registries.yaml
-mirrors:
-  docker.io:
-    endpoint:
-      - "http://$BUILD_SERVER_IP:5000"
-configs:
-  "$BUILD_SERVER_IP:5000":
-    auth:
-      username: admin
-      password: admin@2675
-    #tls:
-      #insecure_skip_verify: true
+backend rke2_api_backend
+    mode tcp
+    balance source
+    server      $MASTERDNS1 $MASTERIP1:6443 check
+    server      $MASTERDNS2 $MASTERIP2:6443 check
+    server      $MASTERDNS3 $MASTERIP3:6443 check
+
+# RKE2 Ingress - layer 4 tcp mode for each. Ingress Controller will handle layer 7.
+frontend rke2_http_ingress_frontend
+    bind :80
+    default_backend rke2_http_ingress_backend
+    mode tcp
+
+backend rke2_http_ingress_backend
+    balance source
+    mode tcp
+    server      $INFRADNS1 $INFRAIP1:80 check
+    server      $INFRADNS2 $INFRAIP2:80 check
+
+frontend rke2_https_ingress_frontend
+    bind *:443
+    default_backend rke2_https_ingress_backend
+    mode tcp
+
+backend rke2_https_ingress_backend
+    mode tcp
+    balance source
+    server      $INFRADNS1 $INFRAIP1:443 check
+    server      $INFRADNS2 $INFRAIP2:443 check
 EOF
 
-  echo - download rke, rancher and longhorn
-  # from https://docs.rke2.io/install/airgap
-  curl -#OL https://github.com/rancher/rke2/releases/download/v$RKE_VERSION%2Brke2r1/rke2-images.linux-amd64.tar.zst
-  curl -#OL https://github.com/rancher/rke2/releases/download/v$RKE_VERSION%2Brke2r1/rke2.linux-amd64.tar.gz
-  curl -#OL https://github.com/rancher/rke2/releases/download/v$RKE_VERSION%2Brke2r1/sha256sum-amd64.txt
-  curl -#OL https://github.com/rancher/rke2-packaging/releases/download/v$RKE_VERSION%2Brke2r1.stable.0/rke2-common-$RKE_VERSION.rke2r1-0."$EL".x86_64.rpm
-  curl -#OL https://github.com/rancher/rke2-selinux/releases/download/v0.17.stable.1/rke2-selinux-0.17-1."$EL".noarch.rpm
-
-  echo - get the install script
-  curl -sfL https://get.rke2.io -o install.sh
-
-  echo - Checking helm 
-  if ! command -v helm &> /dev/null;
-  then
-   echo - Get Helm Charts
-   cd /opt/rancher/helm/
-   echo - get helm
-   curl -#LO https://get.helm.sh/helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
-   tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
-   mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
-   rm -rf linux-amd64 > /dev/null 2>&1
+  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   systemctl start haproxy;systemctl enable haproxy
+  else
+   setsebool -P haproxy_connect_any 1
+   systemctl start haproxy;systemctl enable haproxy
+   firewall-cmd --add-port=6443/tcp --permanent
+   firewall-cmd --add-port=443/tcp --permanent
+   firewall-cmd --add-service=http --permanent
+   firewall-cmd --add-service=https --permanent
+   firewall-cmd --add-port=9000/tcp --permanent
+   firewall-cmd --reload 
   fi
-
-  echo - Setup nfs
-  # share out opt directory
-  echo "/opt/rancher *(ro)" > /etc/exports
-  systemctl enable nfs-server.service && systemctl start nfs-server.service
-
-  cd /opt/rancher/
-  echo - compress all the things
-  if ! test -f /opt/rke2_rancher_longhorn.zst; then
-   tar -I zstd -vcf /opt/rke2_rancher_longhorn.zst $(ls) > /dev/null 2>&1
-  fi
-
-  # look at adding encryption - https://medium.com/@lumjjb/encrypting-container-images-with-skopeo-f733afb1aed4  
-
-  echo "------------------------------------------------------------------"
-  echo " to uncompress : "
-  echo "   yum install -y zstd"
-  echo "   mkdir /opt/rancher"
-  echo "   tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher"
-  echo "------------------------------------------------------------------"
 
 }
 
@@ -307,121 +316,121 @@ function imageload () {
 
 }
 
-################################# LB Setup ################################
-function lbsetup () {
+################################# Compress All ################################
+function compressall () {
 
-  echo - Configuring HAProxy Server
-  #yum install haproxy -y 
-
-  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
-   apt install -y haproxy  
-  else
-   yum install -y haproxy 
+  cd /opt/rancher/
+  echo - compress all the things
+  if ! test -f /opt/rke2_rancher_longhorn.zst; then
+   tar -I zstd -vcf /opt/rke2_rancher_longhorn.zst $(ls) > /dev/null 2>&1
   fi
 
-cat <<EOF > /etc/haproxy/haproxy.cfg
-# Global settings
-#---------------------------------------------------------------------
-global
-    maxconn     20000
-    log         /dev/log local0 info
-    chroot      /var/lib/haproxy
-    pidfile     /var/run/haproxy.pid
-    user        haproxy
-    group       haproxy
-    daemon
-    # turn on stats unix socket
-    stats socket /var/lib/haproxy/stats
-#---------------------------------------------------------------------
-# common defaults that all the 'listen' and 'backend' sections will
-# use if not designated in their block
-#---------------------------------------------------------------------
-defaults
-    log                     global
-    mode                    http
-    option                  httplog
-    option                  dontlognull
-    option http-server-close
-    option redispatch
-    option forwardfor       except 127.0.0.0/8
-    retries                 3
-    maxconn                 20000
-    timeout http-request    10000ms
-    timeout http-keep-alive 10000ms
-    timeout check           10000ms
-    timeout connect         40000ms
-    timeout client          300000ms
-    timeout server          300000ms
-    timeout queue           50000ms
+  # look at adding encryption - https://medium.com/@lumjjb/encrypting-container-images-with-skopeo-f733afb1aed4  
 
-# Enable HAProxy stats
-listen stats
-    bind :9000
-    stats uri /stats
-    stats refresh 10000ms
+  echo "------------------------------------------------------------------"
+  echo " to uncompress : "
+  echo "   yum install -y zstd"
+  echo "   mkdir /opt/rancher"
+  echo "   tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher"
+  echo "------------------------------------------------------------------"
 
-# RKE2 Supervisor Server
-frontend rke2_supervisor_frontend
-    bind :6443
-    default_backend rke2_supervisor_backend
-    mode tcp
+}
 
-backend rke2_supervisor_backend
-    mode tcp
-    balance source
-    server      $MASTERDNS1 $MASTERIP1:9345 check
-    server      $MASTERDNS2 $MASTERIP2:9345 check
-    server      $MASTERDNS3 $MASTERIP3:9345 check
+################################# build ################################
+function build () {
+  
+  echo - Installing packages
+  mkdir -p /root/registry/data/auth
+  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   OS=Ubuntu
+   apt install -y apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix ldap-utils haproxy apparmor 
+  else
+   # el version
+   export EL=$(rpm -q --queryformat '%{RELEASE}' rpm | grep -o "el[[:digit:]]")
+   chcon system_u:object_r:container_file_t:s0 /root/registry/data
+   yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools haproxy zip unzip go nmap telnet dos2unix zstd nfs-utils iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils skopeo
+  fi
 
-# RKE2 Kube API Server
-frontend rke2_api_frontend
-    bind :6443
-    default_backend rke2_api_backend
-    mode tcp
+  echo - "Install docker, crane & setup docker private registry"
+  if ! command -v docker &> /dev/null;
+  then
+    echo "Trying to Install Docker..."
+    #dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+    #dnf install docker-ce --nobest --allowerasing -y
+    curl -s https://releases.rancher.com/install-docker/19.03.sh | sh
+  fi 
+  systemctl start docker; systemctl enable docker
 
-backend rke2_api_backend
-    mode tcp
-    balance source
-    server      $MASTERDNS1 $MASTERIP1:6443 check
-    server      $MASTERDNS2 $MASTERIP2:6443 check
-    server      $MASTERDNS3 $MASTERIP3:6443 check
+  if ! command -v crane &> /dev/null;
+  then
+    echo "Trying to Install Crane..."
+    curl -sL "https://github.com/google/go-containerregistry/releases/download/v0.19.0/go-containerregistry_Linux_x86_64.tar.gz" > go-containerregistry.tar.gz
+    tar -zxvf go-containerregistry.tar.gz -C /usr/local/bin/ crane
+  fi 
 
-# RKE2 Ingress - layer 4 tcp mode for each. Ingress Controller will handle layer 7.
-frontend rke2_http_ingress_frontend
-    bind :80
-    default_backend rke2_http_ingress_backend
-    mode tcp
+  mkdir -p /opt/rancher/{rke2_$RKE_VERSION,helm} /opt/rancher/images/{cert,rancher,longhorn,registry,flask,neuvector,others}
+  cd /opt/rancher/rke2_$RKE_VERSION/
 
-backend rke2_http_ingress_backend
-    balance source
-    mode tcp
-    server      $INFRADNS1 $INFRAIP1:80 check
-    server      $INFRADNS2 $INFRAIP2:80 check
+  echo - Private Registry Setup
+  if ! test -f /root/registry/data/auth/htpasswd; then
+    docker run --name htpass --entrypoint htpasswd httpd:2 -Bbn admin admin@2675 > /root/registry/data/auth/htpasswd  
+    docker rm htpass
+  fi
 
-frontend rke2_https_ingress_frontend
-    bind *:443
-    default_backend rke2_https_ingress_backend
-    mode tcp
+  PR=`docker ps -a -q -f name=private-registry`
+  if [[ $PR == "" ]]; then
+    docker run -itd -p 5000:5000 --restart=always --name private-registry -v /root/registry/data/auth:/auth -v /root/registry/data:/var/lib/registry \
+    -e "REGISTRY_AUTH=htpasswd" \
+    -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
+    -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+    registry
+  fi
 
-backend rke2_https_ingress_backend
-    mode tcp
-    balance source
-    server      $INFRADNS1 $INFRAIP1:443 check
-    server      $INFRADNS2 $INFRAIP2:443 check
+cat <<EOF > /opt/rancher/rke2_$RKE_VERSION/registries.yaml
+mirrors:
+  docker.io:
+    endpoint:
+      - "http://$BUILD_SERVER_IP:5000"
+configs:
+  "$BUILD_SERVER_IP:5000":
+    auth:
+      username: admin
+      password: admin@2675
+    #tls:
+      #insecure_skip_verify: true
 EOF
 
-  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
-   systemctl start haproxy;systemctl enable haproxy
-  else
-   setsebool -P haproxy_connect_any 1
-   systemctl start haproxy;systemctl enable haproxy
-   firewall-cmd --add-port=6443/tcp --permanent
-   firewall-cmd --add-port=443/tcp --permanent
-   firewall-cmd --add-service=http --permanent
-   firewall-cmd --add-service=https --permanent
-   firewall-cmd --add-port=9000/tcp --permanent
-   firewall-cmd --reload 
+  echo - download rke, rancher and longhorn
+  # from https://docs.rke2.io/install/airgap
+  curl -#OL https://github.com/rancher/rke2/releases/download/v$RKE_VERSION%2Brke2r1/rke2-images.linux-amd64.tar.zst
+  curl -#OL https://github.com/rancher/rke2/releases/download/v$RKE_VERSION%2Brke2r1/rke2.linux-amd64.tar.gz
+  curl -#OL https://github.com/rancher/rke2/releases/download/v$RKE_VERSION%2Brke2r1/sha256sum-amd64.txt
+  curl -#OL https://github.com/rancher/rke2-packaging/releases/download/v$RKE_VERSION%2Brke2r1.stable.0/rke2-common-$RKE_VERSION.rke2r1-0."$EL".x86_64.rpm
+  curl -#OL https://github.com/rancher/rke2-selinux/releases/download/v0.17.stable.1/rke2-selinux-0.17-1."$EL".noarch.rpm
+
+  echo - get the install script
+  curl -sfL https://get.rke2.io -o install.sh
+
+  echo - Checking helm 
+  if ! command -v helm &> /dev/null;
+  then
+   echo - Get Helm Charts
+   cd /opt/rancher/helm/
+   echo - get helm
+   curl -#LO https://get.helm.sh/helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
+   tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
+   mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
+   rm -rf linux-amd64 > /dev/null 2>&1
   fi
+
+  echo - Setup nfs
+  # share out opt directory
+  echo "/opt/rancher *(ro)" > /etc/exports
+  systemctl enable nfs-server.service && systemctl start nfs-server.service
+
+  #imageupload
+  #lbsetup
+  #compressall
 
 }
 
@@ -691,6 +700,7 @@ function usage () {
   echo " $0 longhorn # deploy longhorn"
   echo " $0 rancher # deploy rancher"
   echo " $0 validate # validate all the image locations"
+  echo " $0 compressall # Compress all data"
   echo ""
   exit 1
 }
@@ -707,5 +717,6 @@ case "$1" in
         rancher) rancher;;
         flask) flask;;
         validate) validate;;
+        compressall) compressall;;
         *) usage;;
 esac
