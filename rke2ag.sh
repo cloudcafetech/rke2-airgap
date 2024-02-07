@@ -619,7 +619,7 @@ function usage () {
   echo ""
   echo "-------------------------------------------------"
   echo ""
-  echo " Usage: $0 {build | deploy}"
+  echo " Usage: $0 {build | lbsetup | control1 | control23 | worker}"
   echo ""
   echo " $0 build # Setup Build Server"
   echo " $0 lbsetup # Setup LB (HAPROXY) Server"
