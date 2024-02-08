@@ -55,42 +55,47 @@ systemctl start httpd;systemctl enable httpd
 #firewall-cmd --reload
 
 # Download mount CentOS 8 ISO for CentOS 8 server
-mkdir /mnt/iso
-wget http://isoredirect.centos.org/centos/8-stream/isos/x86_64/CentOS-Stream-8-x86_64-latest-dvd1.iso
-mount -t iso9660 -o ro,loop CentOS-Stream-8-x86_64-latest-dvd1.iso /mnt/iso
-cd /mnt/iso
+if [ ! -d /mnt/iso ]; then
+  mkdir /mnt/iso
+fi
 
-mkdir /opt/iso_files
-cp -va * /opt/iso_files/
-mkdir -p /var/www/html/shares
-cp -vaR /opt/iso_files /var/www/html/
-chcon -R -t httpd_sys_content_t /var/www/html/iso_files
-chown -R apache: /var/www/html/iso_files/
-chmod 755 /var/www/html/iso_files
+if [[ ! -f CentOS-Stream-8-x86_64-latest-dvd1.iso ]]; then 
+ wget http://isoredirect.centos.org/centos/8-stream/isos/x86_64/CentOS-Stream-8-x86_64-latest-dvd1.iso
+fi 
 
-cat <<EOF > /var/www/html/iso_files/centos8-remote.repo
+if [[ ! -f /mnt/iso/media.repo ]]; then 
+ mount -t iso9660 -o ro,loop CentOS-Stream-8-x86_64-latest-dvd1.iso /mnt/iso
+fi 
+
+if [[ ! -f /var/www/html/iso/media.repo ]]; then 
+ cp -vaR /mnt/iso /var/www/html/
+ chcon -R -t httpd_sys_content_t /var/www/html/iso
+ chown -R apache: /var/www/html/iso/
+ chmod 755 /var/www/html/iso
+fi
+
+cat <<EOF > /var/www/html/iso/centos8-remote.repo
 [centos8_Appstream_remote]
-baseurl=http://$BUILD_SERVER_IP:8080/iso_files/AppStream
+baseurl=http://$BUILD_SERVER_IP:8080/iso/AppStream
 gpgcheck=0
 name=CentOS Linux App_stream remote
 enable=1
 
 [centos8_BaseOS_remote]
-baseurl=http://$BUILD_SERVER_IP:8080/iso_files/BaseOS
+baseurl=http://$BUILD_SERVER_IP:8080/iso/BaseOS
 gpgcheck=0
 name=CentOS Linux BaseOS remote
 enable=1
 EOF
 
-echo "curl -OL http://$BUILD_SERVER_IP:8080/iso_files/centos8-remote.repo"
-echo "cp centos8-remote.repo /etc/yum.repos.d/centos8.repo"
-echo "chmod 644 /etc/yum.repos.d/centos8.repo"
+cp -vaR /opt/rancher/rke2_"$RKE_VERSION" /var/www/html/
+cp /opt/rancher/rke2ag.sh /var/www/html/rke2_"$RKE_VERSION"/
 
-echo "mkdir /root/old-repo"
-echo "mv /etc/yum.repos.d/C* /root/old-repo/"
-echo "mv /etc/yum.repos.d/google-cloud.repo /root/old-repo/"
+chcon -R -t httpd_sys_content_t /var/www/html/rke2_"$RKE_VERSION"
+chown -R apache: /var/www/html/rke2_"$RKE_VERSION"/
+chmod 755 /var/www/html/rke2_"$RKE_VERSION"
 
-echo "curl $BUILD_SERVER_IP:8080/iso_files/"
+echo "mkdir /opt/rancher && cd /opt/rancher && curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/rke2ag.sh  && chmod 755 rke2ag.sh"
 
 }
 
@@ -392,6 +397,13 @@ function compressall () {
 ################################# build ################################
 function build () {
   
+  echo - skopeo
+  if ! command -v docker &> /dev/null;
+  then
+    echo - Installing skopeo
+    yum install -y skopeo
+  fi
+
   echo - Installing packages
   mkdir -p /root/registry/data/auth
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
@@ -399,7 +411,7 @@ function build () {
    apt install -y apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix ldap-utils haproxy apparmor 
   else
    chcon system_u:object_r:container_file_t:s0 /root/registry/data
-   yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools haproxy zip unzip go nmap telnet dos2unix zstd nfs-utils iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils skopeo
+   yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools haproxy zip unzip go nmap telnet dos2unix zstd nfs-utils iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils 
   fi
 
   echo - "Install docker, crane & setup docker private registry"
@@ -474,12 +486,6 @@ EOF
    rm -rf linux-amd64 > /dev/null 2>&1
   fi
 
-  cp /opt/rancher/rke2ag.sh /var/www/html/shares/
-  cp /opt/rancher/rke2_"$RKE_VERSION"/* /var/www/html/shares/
-  chcon -R -t httpd_sys_content_t /var/www/html/shares
-  chown -R apache: /var/www/html/shares/
-  chmod 755 /var/www/html/shares
-
   echo - Setup nfs
   # share out opt directory
   echo "/opt/rancher *(ro)" > /etc/exports
@@ -497,18 +503,33 @@ function base () {
 # install all the base bits.
 
   # Download from Build server
-  mkdir /opt/rancher
+  if [ ! -d /opt/rancher ]; then
+   mkdir /opt/rancher
+  fi
+
   cd /opt/rancher
-  curl -#OL http://$BUILD_SERVER_IP:8080/shares/rke2ag.sh
+  curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/rke2ag.sh
   #mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
-  mkdir "/opt/rancher/rke2_$RKE_VERSION"
+
+  if [ ! -d "/opt/rancher/rke2_$RKE_VERSION" ]; then
+     mkdir "/opt/rancher/rke2_$RKE_VERSION"
+  fi
+
   cd "/opt/rancher/rke2_$RKE_VERSION"
-  curl -#OL http://$BUILD_SERVER_IP:8080/shares/rke2-images.linux-amd64.tar.zst
-  curl -#OL http://$BUILD_SERVER_IP:8080/shares/rke2.linux-amd64.tar.gz
-  curl -#OL http://$BUILD_SERVER_IP:8080/shares/sha256sum-amd64.txt
-  curl -#OL http://$BUILD_SERVER_IP:8080/shares/rke2-common-$RKE_VERSION.rke2r1-0."$EL".x86_64.rpm
-  curl -#OL http://$BUILD_SERVER_IP:8080/shares/rke2-selinux-0.17-1."$EL".noarch.rpm
-  curl -#OL http://$BUILD_SERVER_IP:8080/shares/registries.yaml
+  curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/rke2-images.linux-amd64.tar.zst
+  curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/rke2.linux-amd64.tar.gz
+  curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/sha256sum-amd64.txt
+  curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/rke2-common-$RKE_VERSION.rke2r1-0."$EL".x86_64.rpm
+  curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
+  curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/registries.yaml
+  curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/install.sh
+  curl -OL http://$BUILD_SERVER_IP:8080/iso/centos8-remote.repo
+  if [ ! -d  /root/old-repo ]; then
+     mkdir /root/old-repo
+  fi
+  rm -rf /etc/yum.repos.d/*.* 
+  cp centos8-remote.repo /etc/yum.repos.d/centos8.repo
+  chmod 644 /etc/yum.repos.d/centos8.repo
 
   ## For Debian distribution
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
@@ -526,7 +547,7 @@ function base () {
    setenforce 0
    sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
    yum install -y git curl wget bind-utils jq httpd-tools zip unzip nfs-utils go nmap telnet dos2unix zstd container-selinux libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils iptables skopeo
-   yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
+   #yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
    #systemctl enable --now iscsid
    #echo -e "[keyfile]\nunmanaged-devices=interface-name:cali*;interface-name:flannel*" > /etc/NetworkManager/conf.d/rke2-canal.conf
   fi
@@ -540,7 +561,15 @@ function deploy_control1 () {
   base
 
   # Setting up Kubernetes Master using RKE2
-  mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images 
+  if [ ! -d  /etc/rancher/rke2 ]; then
+     mkdir -p /etc/rancher/rke2/  
+  fi
+  if [ ! -d  /var/lib/rancher/rke2/server/manifests ]; then
+     mkdir -p /var/lib/rancher/rke2/server/manifests/  
+  fi
+  if [ ! -d  /var/lib/rancher/rke2/agent/images ]; then
+     mkdir -p /var/lib/rancher/rke2/agent/images 
+  fi
   cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
 
 cat << EOF >  /etc/rancher/rke2/config.yaml
@@ -571,6 +600,7 @@ EOF
 
   echo - Install rke2
   cd /opt/rancher/rke2_$RKE_VERSION
+  chmod 755 ./install.sh
 
  # insall rke2 - stig'd
   INSTALL_RKE2_ARTIFACT_PATH=/opt/rancher/rke2_"$RKE_VERSION" sh /opt/rancher/rke2_"$RKE_VERSION"/install.sh 
@@ -587,11 +617,11 @@ EOF
   sleep 5
 
   echo - unpack helm
-  cd /opt/rancher/helm
+  mkdir /mnt/test
+  mount $BUILD_SERVER_IP:/opt/rancher /mnt/test
+  cp /mnt/test/helm/helm-v3.13.2-linux-amd64.tar.gz .
   tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
   mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
-
-  #cat /var/lib/rancher/rke2/server/token > /opt/rancher/token
 
   source ~/.bashrc
 
@@ -604,7 +634,16 @@ function deploy_control23 () {
   base
 
   # Setting up Kubernetes Master using RKE2
-  mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images 
+  if [ ! -d  /etc/rancher/rke2 ]; then
+     mkdir -p /etc/rancher/rke2/  
+  fi
+  if [ ! -d  /var/lib/rancher/rke2/server/manifests ]; then
+     mkdir -p /var/lib/rancher/rke2/server/manifests/  
+  fi
+  if [ ! -d  /var/lib/rancher/rke2/agent/images ]; then
+     mkdir -p /var/lib/rancher/rke2/agent/images 
+  fi
+  cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
 
 cat << EOF >  /etc/rancher/rke2/config.yaml
 server: https://MASTERIP1:9345
@@ -642,7 +681,9 @@ EOF
   sleep 5
 
   echo - unpack helm
-  cd /opt/rancher/helm
+  mkdir /mnt/test
+  mount $BUILD_SERVER_IP:/opt/rancher /mnt/test
+  cp /mnt/test/helm/helm-v3.13.2-linux-amd64.tar.gz .
   tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
   mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
 
@@ -659,7 +700,16 @@ function deploy_worker () {
   base
 
   # Setting up Kubernetes Master using RKE2
-  mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images 
+  if [ ! -d  /etc/rancher/rke2 ]; then
+     mkdir -p /etc/rancher/rke2/  
+  fi
+  if [ ! -d  /var/lib/rancher/rke2/server/manifests ]; then
+     mkdir -p /var/lib/rancher/rke2/server/manifests/  
+  fi
+  if [ ! -d  /var/lib/rancher/rke2/agent/images ]; then
+     mkdir -p /var/lib/rancher/rke2/agent/images 
+  fi
+  cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
 
 cat << EOF >  /etc/rancher/rke2/config.yaml
 server: https://MASTERIP1:9345
@@ -668,13 +718,9 @@ node-label:
 - "region=worker"
 EOF
 
-  # setup RKE2
-  mkdir -p /etc/rancher/rke2/
-
   # install rke2
   cd /opt/rancher
   INSTALL_RKE2_ARTIFACT_PATH=/opt/rancher/rke2_"$RKE_VERSION" INSTALL_RKE2_TYPE=agent sh /opt/rancher/rke2_"$RKE_VERSION"/install.sh 
-  #yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
   systemctl enable --now rke2-agent.service
 
 }
