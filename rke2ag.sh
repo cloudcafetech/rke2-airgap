@@ -60,7 +60,7 @@ cd /mnt/iso
 
 mkdir /opt/iso_files
 cp -va * /opt/iso_files/
-mkdir -p /var/www/html/
+mkdir -p /var/www/html/shares
 cp -vaR /opt/iso_files /var/www/html/
 chcon -R -t httpd_sys_content_t /var/www/html/iso_files
 chown -R apache: /var/www/html/iso_files/
@@ -474,12 +474,18 @@ EOF
    rm -rf linux-amd64 > /dev/null 2>&1
   fi
 
+  cp /opt/rancher/rke2_"$RKE_VERSION"/* /var/www/html/shares/
+  chcon -R -t httpd_sys_content_t /var/www/html/shares
+  chown -R apache: /var/www/html/shares/
+  chmod 755 /var/www/html/shares
+
   echo - Setup nfs
   # share out opt directory
   echo "/opt/rancher *(ro)" > /etc/exports
   systemctl enable nfs-server.service && systemctl start nfs-server.service
 
   #imageupload
+  #websetup
   #lbsetup
   #compressall
 
@@ -738,7 +744,7 @@ function usage () {
   echo ""
   echo "-------------------------------------------------"
   echo ""
-  echo " Usage: $0 {build | imageload | lbsetup | control1 | control23 | worker}"
+  echo " Usage: $0 {build | imageload | websetup | lbsetup | control1 | control23 | worker}"
   echo ""
   echo " $0 build # Setup Build Server"
   echo " $0 imageload # Upload Images in Private Registry"
