@@ -40,6 +40,8 @@ export YELLOW='\x1b[33m'
 export NO_COLOR='\x1b[0m'
 
 export PATH=$PATH:/usr/local/bin
+# el version
+export EL=$(rpm -q --queryformat '%{RELEASE}' rpm | grep -o "el[[:digit:]]")
 
 ########################## Webserver Setup ################################
 websetup() {
@@ -396,8 +398,6 @@ function build () {
    OS=Ubuntu
    apt install -y apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix ldap-utils haproxy apparmor 
   else
-   # el version
-   export EL=$(rpm -q --queryformat '%{RELEASE}' rpm | grep -o "el[[:digit:]]")
    chcon system_u:object_r:container_file_t:s0 /root/registry/data
    yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools haproxy zip unzip go nmap telnet dos2unix zstd nfs-utils iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils skopeo
   fi
@@ -474,6 +474,7 @@ EOF
    rm -rf linux-amd64 > /dev/null 2>&1
   fi
 
+  cp /opt/rancher/rke2ag.sh /var/www/html/shares/
   cp /opt/rancher/rke2_"$RKE_VERSION"/* /var/www/html/shares/
   chcon -R -t httpd_sys_content_t /var/www/html/shares
   chown -R apache: /var/www/html/shares/
@@ -495,38 +496,46 @@ EOF
 function base () {
 # install all the base bits.
 
-### For Debian distribution
-if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
- apt update -y
- apt install apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils -y
- # Stopping and disabling firewalld by running the commands on all servers
- systemctl stop ufw
- systemctl stop apparmor.service
- systemctl disable --now ufw
- systemctl disable --now apparmor.service 
-### For Redhat distribution
-else
- # Stopping and disabling firewalld & SELinux
- systemctl stop firewalld; systemctl disable firewalld
- setenforce 0
- sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
- yum install -y git curl wget bind-utils jq httpd-tools zip unzip nfs-utils go nmap telnet dos2unix zstd container-selinux libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils iptables skopeo
- yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
- #systemctl enable --now iscsid
- #echo -e "[keyfile]\nunmanaged-devices=interface-name:cali*;interface-name:flannel*" > /etc/NetworkManager/conf.d/rke2-canal.conf
-fi
+  # Download from Build server
+  mkdir /opt/rancher
+  cd /opt/rancher
+  curl -#OL http://$BUILD_SERVER_IP:8080/shares/rke2ag.sh
+  #mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
+  mkdir "/opt/rancher/rke2_$RKE_VERSION"
+  cd "/opt/rancher/rke2_$RKE_VERSION"
+  curl -#OL http://$BUILD_SERVER_IP:8080/shares/rke2-images.linux-amd64.tar.zst
+  curl -#OL http://$BUILD_SERVER_IP:8080/shares/rke2.linux-amd64.tar.gz
+  curl -#OL http://$BUILD_SERVER_IP:8080/shares/sha256sum-amd64.txt
+  curl -#OL http://$BUILD_SERVER_IP:8080/shares/rke2-common-$RKE_VERSION.rke2r1-0."$EL".x86_64.rpm
+  curl -#OL http://$BUILD_SERVER_IP:8080/shares/rke2-selinux-0.17-1."$EL".noarch.rpm
+  curl -#OL http://$BUILD_SERVER_IP:8080/shares/registries.yaml
+
+  ## For Debian distribution
+  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   apt update -y
+   apt install apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils -y
+   # Stopping and disabling firewalld by running the commands on all servers
+   systemctl stop ufw
+   systemctl stop apparmor.service
+   systemctl disable --now ufw
+   systemctl disable --now apparmor.service 
+  ### For Redhat distribution
+  else
+   # Stopping and disabling firewalld & SELinux
+   systemctl stop firewalld; systemctl disable firewalld
+   setenforce 0
+   sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+   yum install -y git curl wget bind-utils jq httpd-tools zip unzip nfs-utils go nmap telnet dos2unix zstd container-selinux libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils iptables skopeo
+   yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
+   #systemctl enable --now iscsid
+   #echo -e "[keyfile]\nunmanaged-devices=interface-name:cali*;interface-name:flannel*" > /etc/NetworkManager/conf.d/rke2-canal.conf
+  fi
 
 }
 
 ################################# Deploy Master 1 ################################
 function deploy_control1 () {
   # this is for the first node
-  # mkdir /opt/rancher
-  # tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher
-
-  # Mount from Build server
-  mkdir /opt/rancher
-  mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
 
   base
 
@@ -586,33 +595,16 @@ EOF
 
   source ~/.bashrc
 
-  echo "------------------------------------------------------------------"
-  echo " Next:"
-  echo "  - Mkdir: \"mkdir /opt/rancher\""
-  echo "  - Mount: \"mount $(hostname -I | awk '{ print $1 }'):/opt/rancher /opt/rancher\""
-  echo "  - CD: \"cd /opt/rancher\""
-  echo "  - Run: \""$0" worker\" on your worker nodes"
-  echo "------------------------------------------------------------------"
-  echo "  - yolo: \"mkdir /opt/rancher && echo \"$(hostname -I | awk '{ print $1 }'):/opt/rancher /opt/rancher nfs rw,hard,rsize=1048576,wsize=1048576 0 0\" >> /etc/fstab && mount -a && cd /opt/rancher && $0 worker\""
-  echo "------------------------------------------------------------------"
-
 }
 
 ################################# Deploy Master 2 & 3 ################################
 function deploy_control23 () {
   # this is for the 2nd & 3rd Master node
-  # mkdir /opt/rancher
-  # tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher
-
-  # Mount from Build server
-  mkdir /opt/rancher
-  mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
 
   base
 
   # Setting up Kubernetes Master using RKE2
   mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images 
-  cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
 
 cat << EOF >  /etc/rancher/rke2/config.yaml
 server: https://MASTERIP1:9345
@@ -664,15 +656,10 @@ EOF
 function deploy_worker () {
   echo - deploy worker
 
-  # Mount from Build server
-  mkdir /opt/rancher
-  mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
-
   base
 
   # Setting up Kubernetes Master using RKE2
   mkdir -p /etc/rancher/rke2/ /var/lib/rancher/rke2/server/manifests/ /var/lib/rancher/rke2/agent/images 
-  cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
 
 cat << EOF >  /etc/rancher/rke2/config.yaml
 server: https://MASTERIP1:9345
