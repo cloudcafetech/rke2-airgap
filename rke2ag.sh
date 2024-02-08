@@ -62,7 +62,7 @@ mkdir /opt/iso_files
 cp -va * /opt/iso_files/
 mkdir -p /var/www/html/
 cp -vaR /opt/iso_files /var/www/html/
-chcon -R -t httpd_sys_content_t /var/www/html/repo/iso_files
+chcon -R -t httpd_sys_content_t /var/www/html/iso_files
 chown -R apache: /var/www/html/iso_files/
 chmod 755 /var/www/html/iso_files
 
