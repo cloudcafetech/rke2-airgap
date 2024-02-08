@@ -41,6 +41,57 @@ export NO_COLOR='\x1b[0m'
 
 export PATH=$PATH:/usr/local/bin
 
+########################## Webserver Setup ################################
+websetup() {
+
+echo - Apache Web Server
+yum install -y httpd
+sed -i 's/Listen 80/Listen 0.0.0.0:8080/' /etc/httpd/conf/httpd.conf
+setsebool -P httpd_read_user_content 1
+systemctl start httpd;systemctl enable httpd
+#firewall-cmd --add-port=8080/tcp --permanent
+#firewall-cmd --reload
+
+# Download mount CentOS 8 ISO for CentOS 8 server
+mkdir /mnt/iso
+wget http://isoredirect.centos.org/centos/8-stream/isos/x86_64/CentOS-Stream-8-x86_64-latest-dvd1.iso
+mount -t iso9660 -o ro,loop CentOS-Stream-8-x86_64-latest-dvd1.iso /mnt/iso
+cd /mnt/iso
+
+mkdir /opt/iso_files
+cp -va * /opt/iso_files/
+mkdir -p /var/www/html/
+cp -vaR /opt/iso_files /var/www/html/
+chcon -R -t httpd_sys_content_t /var/www/html/repo/iso_files
+chown -R apache: /var/www/html/iso_files/
+chmod 755 /var/www/html/iso_files
+
+cat <<EOF > /var/www/html/iso_files/centos8-remote.repo
+[centos8_Appstream_remote]
+baseurl=http://$BUILD_SERVER_IP:8080/iso_files/AppStream
+gpgcheck=0
+name=CentOS Linux App_stream remote
+enable=1
+
+[centos8_BaseOS_remote]
+baseurl=http://$BUILD_SERVER_IP:8080/iso_files/BaseOS
+gpgcheck=0
+name=CentOS Linux BaseOS remote
+enable=1
+EOF
+
+echo "curl -OL http://$BUILD_SERVER_IP:8080/iso_files/centos8-remote.repo"
+echo "cp centos8-remote.repo /etc/yum.repos.d/centos8.repo"
+echo "chmod 644 /etc/yum.repos.d/centos8.repo"
+
+echo "mkdir /root/old-repo"
+echo "mv /etc/yum.repos.d/C* /root/old-repo/"
+echo "mv /etc/yum.repos.d/google-cloud.repo /root/old-repo/"
+
+echo "curl $BUILD_SERVER_IP:8080/iso_files/"
+
+}
+
 ################################# LB Setup ################################
 function lbsetup () {
 
@@ -692,6 +743,7 @@ function usage () {
   echo " $0 build # Setup Build Server"
   echo " $0 imageload # Upload Images in Private Registry"
   echo " $0 lbsetup # Setup LB (HAPROXY) Server"
+  echo " $0 websetup # Web (repo) Server"
   echo " $0 control1 # Deploy 1st Master Server"
   echo " $0 control23 # Deploy 2nd & 3rd Master Server"
   echo " $0 worker # Deploy Worker"
@@ -709,6 +761,7 @@ case "$1" in
         build ) build;;
         imageload ) imageload;;
         lbsetup ) lbsetup;;
+        websetup ) websetup;;
         control1) deploy_control1;;
         control23) deploy_control23;;
         worker) deploy_worker;;
