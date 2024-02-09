@@ -368,53 +368,59 @@ function imageload () {
   curl -#L https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/other-images.txt -o others/other-images.txt
 
   echo - Login docker for upload images
-  docker login -u admin -p admin@2675 localhost:5000
+  echo { > /etc/docker/daemon.json
+  echo '    "insecure-registries" : [ "hostip:5000" ]' >> /etc/docker/daemon.json
+  echo } >> /etc/docker/daemon.json
+  sed -i "s/hostip/$BUILD_SERVER_IP/g" /etc/docker/daemon.json
+
+  systemctl restart docker
+  docker login -u admin -p admin@2675 $BUILD_SERVER_IP:5000
 
   echo - Load images for Mongo Redis Registry
-  crane copy mongo:latest localhost:5000/mongo:latest
-  crane copy redis:latest localhost:5000/redis:latest
-  crane copy registry:latest localhost:5000/registry:latest
-  crane copy debian:9 localhost:5000/debian:9
-  crane copy k8s.gcr.io/addon-resizer:1.7 localhost:5000/addon-resizer:1.7
-  crane copy prom/alertmanager:v0.16.2 localhost:5000/prometheus/alertmanager:v0.16.0
+  crane --insecure copy mongo:latest $BUILD_SERVER_IP:5000/mongo:latest
+  crane --insecure copy redis:latest $BUILD_SERVER_IP:5000/redis:latest
+  crane --insecure copy registry:latest $BUILD_SERVER_IP:5000/registry:latest
+  crane --insecure copy debian:9 $BUILD_SERVER_IP:5000/debian:9
+  crane --insecure copy k8s.gcr.io/addon-resizer:1.7 $BUILD_SERVER_IP:5000/addon-resizer:1.7
+  crane --insecure copy prom/alertmanager:v0.16.2 $BUILD_SERVER_IP:5000/prometheus/alertmanager:v0.16.0
 
   echo - Load images for Longhorn
   for i in $(cat /opt/rancher/images/longhorn/longhorn-images.txt); do
     img=$(echo $i | cut -d'/' -f2)
     pkg=$(echo $i | cut -d'/' -f1)
-    crane copy $i localhost:5000/$pkg/$img
+    crane --insecure copy $i $BUILD_SERVER_IP:5000/$pkg/$img
   done
 
   echo - load images for CertManager
   for i in $(cat /opt/rancher/images/cert/cert-manager-images.txt); do
     img=$(echo $i | cut -d'/' -f3)
     pkg=$(echo $i | cut -d'/' -f2)
-    crane copy $i localhost:5000/$pkg/$img
+    crane --insecure copy $i $BUILD_SERVER_IP:5000/$pkg/$img
   done
 
   echo - load images for Neuvector
   for i in $(cat /opt/rancher/images/neuvector/neuvector-images.txt); do
     img=$(echo $i | cut -d'/' -f3)
     pkg=$(echo $i | cut -d'/' -f2)
-    crane copy $i localhost:5000/$pkg/$img
+    crane --insecure copy $i $BUILD_SERVER_IP:5000/$pkg/$img
   done
 
   echo - load images for Rancher
   for i in $(cat /opt/rancher/images/rancher/rancher-images.txt); do
     img=$(echo $i | cut -d'/' -f2)
     pkg=$(echo $i | cut -d'/' -f1)
-    crane copy $i localhost:5000/$pkg/$img
+    crane --insecure copy $i $BUILD_SERVER_IP:5000/$pkg/$img
   done
 
   echo - load images for Monitoring Logging Auth Dashboard Nginx
   for i in $(cat /opt/rancher/images/others/other-images.txt); do
     img=$(echo $i | cut -d'/' -f3)
     pkg=$(echo $i | cut -d'/' -f2)
-    crane copy $i localhost:5000/$pkg/$img
+    crane --insecure copy $i $BUILD_SERVER_IP:5000/$pkg/$img
   done
 
   # Verify Image upload
-  crane catalog localhost:5000
+  crane --insecure catalog $BUILD_SERVER_IP:5000
 
 }
 
