@@ -794,6 +794,21 @@ EOF
 
 }
 
+################## Cluster login from Build Server #####################
+function kubelogin () {
+
+echo - Kubernetes login setup
+if ! command -v kubectl &> /dev/null;
+  then
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod 755 kubectl && mv kubectl /usr/local/bin/
+fi 
+scp -i <PEM file location> <USER>@<MASTER1>:/etc/rancher/rke2/rke2.yaml .
+cp rke2.yaml kubeconfig
+sed -i "s/127.0.0.1/$LB_IP/g" kubeconfig
+export KUBECONFIG=./kubeconfig
+kubectl get no
+}
+
 ################################# flask ################################
 function flask () {
   # dummy 3 tier app - asked for by a customer. 
@@ -875,6 +890,7 @@ case "$1" in
         control1) deploy_control1;;
         control23) deploy_control23;;
         worker) deploy_worker;;
+        kubelogin) kubelogin;;
         neuvector) neuvector;;
         longhorn) longhorn;;
         rancher) rancher;;
