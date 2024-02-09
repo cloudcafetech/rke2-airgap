@@ -7,6 +7,7 @@
 #set -ebpf
 
 BUILD_SERVER_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
+BUILD_SERVER_DNS=`hostname`
 LB_IP=
 
 MASTERDNS1=master1
@@ -42,6 +43,43 @@ export NO_COLOR='\x1b[0m'
 export PATH=$PATH:/usr/local/bin
 # el version
 export EL=$(rpm -q --queryformat '%{RELEASE}' rpm | grep -o "el[[:digit:]]")
+
+########################## Certificate Generate ###########################
+certgen() {
+
+cat <<EOF > san.cnf
+[req]
+default_bits  = 2048
+distinguished_name = req_distinguished_name
+req_extensions = req_ext
+x509_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+countryName = IN
+stateOrProvinceName = WB
+localityName = KOL
+organizationName = Cloud Cafe
+commonName = 127.0.0.1: Cloud Cafe
+
+[req_ext]
+subjectAltName = @alt_names
+
+[v3_req]
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = $BUILD_SERVER_DNS
+DNS.2 = localhost
+IP.1 = $BUILD_SERVER_IP
+IP.2 = 127.0.0.1
+EOF
+
+openssl genrsa 1024 > domain.key
+chmod 400 domain.key
+openssl req -new -x509 -nodes -sha1 -days 365 -key domain.key -out domain.crt -config san.cnf
+
+}
 
 ########################## Webserver Setup ################################
 websetup() {
@@ -236,6 +274,11 @@ function imageload () {
     tar -zxvf go-containerregistry.tar.gz -C /usr/local/bin/ crane
   fi 
 
+  mkdir -p /root/registry/data/certs
+  certgen
+  cp domain.key /root/registry/data/certs/domain.key
+  cp domain.crt /root/registry/data/certs/domain.crt
+
   mkdir -p /root/registry/data/auth
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
    OS=Ubuntu
@@ -251,10 +294,11 @@ function imageload () {
 
   PR=`docker ps -a -q -f name=private-registry`
   if [[ $PR == "" ]]; then
-    docker run -itd -p 5000:5000 --restart=always --name private-registry -v /root/registry/data/auth:/auth -v /root/registry/data:/var/lib/registry \
-    -e "REGISTRY_AUTH=htpasswd" \
-    -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
-    -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+    docker run -itd -p 5000:5000 --restart=always --name private-registry \
+    -v /root/registry/data/auth:/auth -v /root/registry/data:/var/lib/registry \
+    -v /root/registry/data/certs:/certs -v /root/registry/data/certs:/certs \
+    -e REGISTRY_AUTH=htpasswd -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+    -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt -e REGISTRY_HTTP_TLS_KEY=/certs/domain.key \
     registry
   fi
 
@@ -442,10 +486,11 @@ function build () {
 
   PR=`docker ps -a -q -f name=private-registry`
   if [[ $PR == "" ]]; then
-    docker run -itd -p 5000:5000 --restart=always --name private-registry -v /root/registry/data/auth:/auth -v /root/registry/data:/var/lib/registry \
-    -e "REGISTRY_AUTH=htpasswd" \
-    -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
-    -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+    docker run -itd -p 5000:5000 --restart=always --name private-registry \
+    -v /root/registry/data/auth:/auth -v /root/registry/data:/var/lib/registry \
+    -v /root/registry/data/certs:/certs -v /root/registry/data/certs:/certs \
+    -e REGISTRY_AUTH=htpasswd -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+    -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt -e REGISTRY_HTTP_TLS_KEY=/certs/domain.key \
     registry
   fi
 
@@ -459,8 +504,8 @@ configs:
     auth:
       username: admin
       password: admin@2675
-    #tls:
-      #insecure_skip_verify: true
+    tls:
+      insecure_skip_verify: true
 EOF
 
   echo - download rke, rancher and longhorn
