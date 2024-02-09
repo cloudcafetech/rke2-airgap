@@ -273,11 +273,6 @@ function imageload () {
     tar -zxvf go-containerregistry.tar.gz -C /usr/local/bin/ crane
   fi 
 
-  mkdir -p /root/registry/data/certs
-  certgen
-  cp domain.key /root/registry/data/certs/domain.key
-  cp domain.crt /root/registry/data/certs/domain.crt
-
   mkdir -p /root/registry/data/auth
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
    OS=Ubuntu
@@ -480,8 +475,10 @@ function build () {
     tar -zxvf go-containerregistry.tar.gz -C /usr/local/bin/ crane
   fi 
 
-  mkdir -p /opt/rancher/{rke2_$RKE_VERSION,helm} /opt/rancher/images/{cert,rancher,longhorn,registry,flask,neuvector,others}
-  cd /opt/rancher/rke2_$RKE_VERSION/
+  mkdir -p /root/registry/data/certs
+  certgen
+  cp domain.key /root/registry/data/certs/domain.key
+  cp domain.crt /root/registry/data/certs/domain.crt
 
   echo - Private Registry Setup
   if ! test -f /root/registry/data/auth/htpasswd; then
@@ -498,6 +495,9 @@ function build () {
     -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt -e REGISTRY_HTTP_TLS_KEY=/certs/domain.key \
     registry
   fi
+
+  mkdir -p /opt/rancher/{rke2_$RKE_VERSION,helm} /opt/rancher/images/{cert,rancher,longhorn,registry,flask,neuvector,others}
+  cd /opt/rancher/rke2_$RKE_VERSION/
 
 cat <<EOF > /opt/rancher/rke2_$RKE_VERSION/registries.yaml
 mirrors:
@@ -802,7 +802,7 @@ if ! command -v kubectl &> /dev/null;
   then
     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod 755 kubectl && mv kubectl /usr/local/bin/
 fi 
-scp -i <PEM file location> <USER>@<MASTER1>:/etc/rancher/rke2/rke2.yaml .
+#scp -i <PEM file location> <USER>@<MASTER1>:/etc/rancher/rke2/rke2.yaml .
 cp rke2.yaml kubeconfig
 sed -i "s/127.0.0.1/$LB_IP/g" kubeconfig
 export KUBECONFIG=./kubeconfig
