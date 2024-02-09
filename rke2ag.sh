@@ -4,14 +4,14 @@
 
 # interesting https://docs.k3s.io/installation/registry-mirrors
 
-set -ebpf
+#set -ebpf
 
 BUILD_SERVER_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
 LB_IP=
 
-MASTERDNS1=
-MASTERDNS2=
-MASTERDNS3=
+MASTERDNS1=master1
+MASTERDNS2=master2
+MASTERDNS3=master3
 
 MASTERIP1=
 MASTERIP2=
@@ -507,8 +507,6 @@ function base () {
    mkdir /opt/rancher
   fi
 
-  cd /opt/rancher
-  curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/rke2ag.sh
   #mount $BUILD_SERVER_IP:/opt/rancher /opt/rancher
 
   if [ ! -d "/opt/rancher/rke2_$RKE_VERSION" ]; then
@@ -524,10 +522,8 @@ function base () {
   curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/registries.yaml
   curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/install.sh
   curl -OL http://$BUILD_SERVER_IP:8080/iso/centos8-remote.repo
-  if [ ! -d  /root/old-repo ]; then
-     mkdir /root/old-repo
-  fi
-  rm -rf /etc/yum.repos.d/*.* 
+
+  rm -rf /etc/yum.repos.d/* 
   cp centos8-remote.repo /etc/yum.repos.d/centos8.repo
   chmod 644 /etc/yum.repos.d/centos8.repo
 
@@ -609,10 +605,18 @@ EOF
 
   sleep 30
 
+  mkdir ~/.kube
+  ln -s /etc/rancher/rke2/rke2.yaml ~/.kube/config  
+  chmod 600 /root/.kube/config
+  ln -s /var/lib/rancher/rke2/agent/etc/crictl.yaml /etc/crictl.yaml
+  export PATH=/var/lib/rancher/rke2/bin:$PATH
+  echo "export PATH=/var/lib/rancher/rke2/bin:$PATH" >> $HOME/.bash_profile
+  echo "alias oc=/var/lib/rancher/rke2/bin/kubectl" >> $HOME/.bash_profile
+
   # wait and add link
-  echo "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml CRI_CONFIG_FILE=/var/lib/rancher/rke2/agent/etc/crictl.yaml PATH=$PATH:/var/lib/rancher/rke2/bin" >> ~/.bashrc
-  ln -s /var/run/k3s/containerd/containerd.sock /var/run/containerd/containerd.sock
-  source ~/.bashrc
+  #echo "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml CRI_CONFIG_FILE=/var/lib/rancher/rke2/agent/etc/crictl.yaml PATH=$PATH:/var/lib/rancher/rke2/bin" >> ~/.bashrc
+  #ln -s /var/run/k3s/containerd/containerd.sock /var/run/containerd/containerd.sock
+  #source ~/.bashrc
 
   sleep 5
 
@@ -646,7 +650,7 @@ function deploy_control23 () {
   cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
 
 cat << EOF >  /etc/rancher/rke2/config.yaml
-server: https://MASTERIP1:9345
+server: https://$MASTERIP1:9345
 token: pkls-secret
 write-kubeconfig-mode: "0644"
 node-label:
@@ -673,10 +677,18 @@ EOF
 
   sleep 30
 
+  mkdir ~/.kube
+  ln -s /etc/rancher/rke2/rke2.yaml ~/.kube/config  
+  chmod 600 /root/.kube/config
+  ln -s /var/lib/rancher/rke2/agent/etc/crictl.yaml /etc/crictl.yaml
+  export PATH=/var/lib/rancher/rke2/bin:$PATH
+  echo "export PATH=/var/lib/rancher/rke2/bin:$PATH" >> $HOME/.bash_profile
+  echo "alias oc=/var/lib/rancher/rke2/bin/kubectl" >> $HOME/.bash_profile
+
   # wait and add link
-  echo "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml CRI_CONFIG_FILE=/var/lib/rancher/rke2/agent/etc/crictl.yaml PATH=$PATH:/var/lib/rancher/rke2/bin" >> ~/.bashrc
-  ln -s /var/run/k3s/containerd/containerd.sock /var/run/containerd/containerd.sock
-  source ~/.bashrc
+  #echo "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml CRI_CONFIG_FILE=/var/lib/rancher/rke2/agent/etc/crictl.yaml PATH=$PATH:/var/lib/rancher/rke2/bin" >> ~/.bashrc
+  #ln -s /var/run/k3s/containerd/containerd.sock /var/run/containerd/containerd.sock
+  #source ~/.bashrc
 
   sleep 5
 
@@ -712,7 +724,7 @@ function deploy_worker () {
   cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
 
 cat << EOF >  /etc/rancher/rke2/config.yaml
-server: https://MASTERIP1:9345
+server: https://$MASTERIP1:9345
 token: pkls-secret
 node-label:
 - "region=worker"
@@ -722,6 +734,11 @@ EOF
   cd /opt/rancher
   INSTALL_RKE2_ARTIFACT_PATH=/opt/rancher/rke2_"$RKE_VERSION" INSTALL_RKE2_TYPE=agent sh /opt/rancher/rke2_"$RKE_VERSION"/install.sh 
   systemctl enable --now rke2-agent.service
+
+  # wait and add link
+  ln -s /var/lib/rancher/rke2/agent/etc/crictl.yaml /etc/crictl.yaml
+  export PATH=/var/lib/rancher/rke2/bin:$PATH
+  echo "export PATH=/var/lib/rancher/rke2/bin:$PATH" >> $HOME/.bash_profile
 
 }
 
@@ -775,7 +792,9 @@ function validate () {
 ############################# usage ################################
 function usage () {
   echo ""
-  echo "-------------------------------------------------"
+  echo "-------------------------------------------------------------------------------------------------"
+  echo " mkdir /opt/rancher && cd /opt/rancher && curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/rke2ag.sh  && chmod 755 rke2ag.sh"
+  echo "-------------------------------------------------------------------------------------------------"
   echo ""
   echo " Usage: $0 {build | imageload | websetup | lbsetup | control1 | control23 | worker}"
   echo ""
