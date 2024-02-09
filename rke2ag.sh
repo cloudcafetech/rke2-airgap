@@ -24,7 +24,6 @@ INFRAIP2=
 INFRADNS1=
 INFRANDS2=
 
-
 # versions
 export RKE_VERSION=1.26.12
 export CERT_VERSION=v1.13.3
@@ -704,6 +703,8 @@ cat << EOF >  /etc/rancher/rke2/config.yaml
 server: https://$MASTERIP1:9345
 token: pkls-secret
 write-kubeconfig-mode: "0644"
+cluster-cidr: 192.168.0.0/16
+service-cidr: 192.167.0.0/16
 node-label:
 - "region=master"
 tls-san:
@@ -843,9 +844,6 @@ function validate () {
 ############################# usage ################################
 function usage () {
   echo ""
-  echo "-------------------------------------------------------------------------------------------------"
-  echo " mkdir /opt/rancher && cd /opt/rancher && curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/rke2ag.sh  && chmod 755 rke2ag.sh"
-  echo "-------------------------------------------------------------------------------------------------"
   echo ""
   echo " Usage: $0 {build | imageload | websetup | lbsetup | control1 | control23 | worker}"
   echo ""
@@ -853,6 +851,9 @@ function usage () {
   echo " $0 imageload # Upload Images in Private Registry"
   echo " $0 lbsetup # Setup LB (HAPROXY) Server"
   echo " $0 websetup # Web (repo) Server"
+  echo "-------------------------------------------------------------------------------------------------"
+  echo " mkdir /opt/rancher && cd /opt/rancher && curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/rke2ag.sh  && chmod 755 rke2ag.sh"
+  echo "-------------------------------------------------------------------------------------------------"
   echo " $0 control1 # Deploy 1st Master Server"
   echo " $0 control23 # Deploy 2nd & 3rd Master Server"
   echo " $0 worker # Deploy Worker"
