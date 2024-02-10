@@ -192,7 +192,7 @@ listen stats
 
 # RKE2 Supervisor Server
 frontend rke2_supervisor_frontend
-    bind :6443
+    bind :9345
     default_backend rke2_supervisor_backend
     mode tcp
 
