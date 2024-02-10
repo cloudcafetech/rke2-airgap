@@ -125,24 +125,25 @@ EOF
  chcon -R -t httpd_sys_content_t /var/www/html/iso
  chown -R apache: /var/www/html/iso/
  chmod 755 /var/www/html/iso
+ umount /mnt/iso
 fi
 
-# Download mount Ubuntu 20.04 ISO for Ubuntu
-if [ ! -d /mnt/debian-iso ]; then
-  mkdir /mnt/debian-iso
+# Download Packages for Ubuntu 20.04 
+if [ ! -d /root/ubuntu-repo ]; then
+  mkdir /root/ubuntu-repo
+  chcon system_u:object_r:container_file_t:s0 /root/ubuntu-repo
 fi
 
-if [[ ! -f ubuntu-20.04.6-live-server-amd64.iso ]]; then 
- wget http://releases.ubuntu.com/20.04/ubuntu-20.04.6-live-server-amd64.iso
-fi 
-
-if [[ ! -f /mnt/debian-iso/md5sum.txt ]]; then 
- mount -o loop ubuntu-20.04.6-live-server-amd64.iso /mnt/debian-iso
+if [[ ! -f /root/ubuntu-repo/wget_1.20.3-1ubuntu2_amd64.deb ]]; then 
+ curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ubuntu-pkg.sh && chmod 755 ubuntu-pkg.sh
+ docker run --name ubuntu -it -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-pkg.sh)"
+ sleep 10
+ docker rm ubuntu
 fi 
 
 if [[ ! -d /var/www/html/ubuntu-repo ]]; then 
   mkdir -p /var/www/html/ubuntu-repo
-  find /mnt/debian-iso -iname *.deb | xargs cp -t /var/www/html/ubuntu-repo/
+  cp -vaR /root/ubuntu-repo /var/www/html/
   chcon -R -t httpd_sys_content_t /var/www/html/ubuntu-repo
   chown -R apache: /var/www/html/ubuntu-repo/
   chmod 755 /var/www/html/ubuntu-repo
@@ -620,7 +621,8 @@ function base () {
   ## For Debian distribution
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
    echo "# Local APT Repository" >> /etc/apt/sources.list 
-   echo "deb [allow-insecure-yes] http://$BUILD_SERVER_IP:8080/ubuntu-repo ./" >> /etc/apt/sources.list
+   #echo "deb [allow-insecure-yes] http://$BUILD_SERVER_IP:8080/ubuntu-repo ./" >> /etc/apt/sources.list
+   echo "deb [trusted=yes] http://$BUILD_SERVER_IP:8080/ubuntu-repo ./" >> /etc/apt/sources.list
    apt update -y
    apt install apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils -y
    # Stopping and disabling firewalld by running the commands on all servers
