@@ -6,6 +6,7 @@
 
 #set -ebpf
 
+BUILD_SERVER_PUBIP=`curl -s checkip.dyndns.org | sed -e 's/.*Current IP Address: //' -e 's/<.*$//'`
 BUILD_SERVER_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
 BUILD_SERVER_DNS=`hostname`
 LB_IP=
@@ -224,8 +225,9 @@ frontend rke2_http_ingress_frontend
 backend rke2_http_ingress_backend
     balance source
     mode tcp
-    server      $INFRADNS1 $INFRAIP1:80 check
-    server      $INFRADNS2 $INFRAIP2:80 check
+    server      $MASTERDNS1 $MASTERIP1:80 check
+    server      $MASTERDNS2 $MASTERIP2:80 check
+    server      $MASTERDNS3 $MASTERIP3:80 check
 
 frontend rke2_https_ingress_frontend
     bind *:443
@@ -235,8 +237,9 @@ frontend rke2_https_ingress_frontend
 backend rke2_https_ingress_backend
     mode tcp
     balance source
-    server      $INFRADNS1 $INFRAIP1:443 check
-    server      $INFRADNS2 $INFRAIP2:443 check
+    server      $MASTERDNS1 $MASTERIP1:443 check
+    server      $MASTERDNS2 $MASTERIP2:443 check
+    server      $MASTERDNS3 $MASTERIP3:443 check
 EOF
 
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
@@ -634,10 +637,10 @@ tls-san:
   - "$MASTERIP2"
   - "$MASTERIP3"
 disable:
-  - rke2-ingress-nginx
   - rke2-snapshot-controller
   - rke2-snapshot-controller-crd
   - rke2-snapshot-validation-webhook
+#  - rke2-ingress-nginx
 #  - rke2-coredns
 #  - rke2-metrics-server
 #node-taint:
@@ -796,7 +799,6 @@ EOF
 
 ################## Cluster login from Build Server #####################
 function kubelogin () {
-
 echo - Kubernetes login setup
 if ! command -v kubectl &> /dev/null;
   then
@@ -807,6 +809,30 @@ cp rke2.yaml kubeconfig
 sed -i "s/127.0.0.1/$LB_IP/g" kubeconfig
 export KUBECONFIG=./kubeconfig
 kubectl get no
+
+echo - Kubernetes Monitoring Setup
+cd /opt/rancher/images/others/
+wget -q https://raw.githubusercontent.com/cloudcafetech/AI-for-K8S/main/kubemon.yaml
+wget -q https://github.com/cloudcafetech/kubesetup/raw/master/monitoring/dashboard/pod-monitoring.json
+wget -q https://github.com/cloudcafetech/kubesetup/raw/master/monitoring/dashboard/kube-monitoring-overview.json
+wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/kubelog.yaml
+wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/loki.yaml
+wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/promtail.yaml
+
+sed -i "s/34.125.24.130/$BUILD_SERVER_PUBIP/g" kubemon.yaml
+sed -i -e "s/quay.io/$BUILD_SERVER_IP:5000/g" -e "s/k8s.gcr.io/$BUILD_SERVER_IP:5000/g" kubemon.yaml
+kubectl create ns monitoring
+kubectl create configmap grafana-dashboards -n monitoring --from-file=pod-monitoring.json --from-file=kube-monitoring-overview.json
+kubectl create -f kubemon.yaml -n monitoring
+
+sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kubelog.yaml
+sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" promtail.yaml
+kubectl create ns logging
+kubectl create secret generic loki -n logging --from-file=loki.yaml
+kubectl create -f kubelog.yaml -n logging
+kubectl delete ds loki-fluent-bit-loki -n logging
+kubectl create -f promtail.yaml -n logging
+
 }
 
 ################################# flask ################################
