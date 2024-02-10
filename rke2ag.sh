@@ -92,7 +92,7 @@ systemctl start httpd;systemctl enable httpd
 #firewall-cmd --add-port=8080/tcp --permanent
 #firewall-cmd --reload
 
-# Download mount CentOS 8 ISO for CentOS 8 server
+# Download mount CentOS 8 ISO for CentOS
 if [ ! -d /mnt/iso ]; then
   mkdir /mnt/iso
 fi
@@ -107,10 +107,6 @@ fi
 
 if [[ ! -f /var/www/html/iso/media.repo ]]; then 
  cp -vaR /mnt/iso /var/www/html/
- chcon -R -t httpd_sys_content_t /var/www/html/iso
- chown -R apache: /var/www/html/iso/
- chmod 755 /var/www/html/iso
-fi
 
 cat <<EOF > /var/www/html/iso/centos8-remote.repo
 [centos8_Appstream_remote]
@@ -125,6 +121,32 @@ gpgcheck=0
 name=CentOS Linux BaseOS remote
 enable=1
 EOF
+
+ chcon -R -t httpd_sys_content_t /var/www/html/iso
+ chown -R apache: /var/www/html/iso/
+ chmod 755 /var/www/html/iso
+fi
+
+# Download mount Ubuntu 20.04 ISO for Ubuntu
+if [ ! -d /mnt/debian-iso ]; then
+  mkdir /mnt/debian-iso
+fi
+
+if [[ ! -f ubuntu-20.04.6-live-server-amd64.iso ]]; then 
+ wget http://releases.ubuntu.com/20.04/ubuntu-20.04.6-live-server-amd64.iso
+fi 
+
+if [[ ! -f /mnt/debian-iso/md5sum.txt ]]; then 
+ mount -o loop ubuntu-20.04.6-live-server-amd64.iso /mnt/debian-iso
+fi 
+
+if [[ ! -d /var/www/html/ubuntu-repo ]]; then 
+  mkdir -p /var/www/html/ubuntu-repo
+  find /mnt/debian-iso -iname *.deb | xargs cp -t /var/www/html/ubuntu-repo/
+  chcon -R -t httpd_sys_content_t /var/www/html/ubuntu-repo
+  chown -R apache: /var/www/html/ubuntu-repo/
+  chmod 755 /var/www/html/ubuntu-repo
+fi
 
 cp -vaR /opt/rancher/rke2_"$RKE_VERSION" /var/www/html/
 cp /opt/rancher/rke2ag.sh /var/www/html/rke2_"$RKE_VERSION"/
@@ -252,6 +274,7 @@ EOF
    firewall-cmd --add-service=http --permanent
    firewall-cmd --add-service=https --permanent
    firewall-cmd --add-port=9000/tcp --permanent
+   firewall-cmd --add-port=9345/tcp --permanent
    firewall-cmd --reload 
   fi
 
@@ -478,6 +501,11 @@ function build () {
     tar -zxvf go-containerregistry.tar.gz -C /usr/local/bin/ crane
   fi 
 
+  if ! command -v kubectl &> /dev/null;
+  then
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod 755 kubectl && mv kubectl /usr/local/bin/
+  fi 
+
   mkdir -p /root/registry/data/certs
   certgen
   cp domain.key /root/registry/data/certs/domain.key
@@ -539,6 +567,19 @@ EOF
    rm -rf linux-amd64 > /dev/null 2>&1
   fi
 
+  echo - Get Moitoring and Logging yamls
+  cd /opt/rancher/images/others/
+  wget -q https://raw.githubusercontent.com/cloudcafetech/AI-for-K8S/main/kubemon.yaml
+  wget -q https://github.com/cloudcafetech/kubesetup/raw/master/monitoring/dashboard/pod-monitoring.json
+  wget -q https://github.com/cloudcafetech/kubesetup/raw/master/monitoring/dashboard/kube-monitoring-overview.json
+  wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/kubelog.yaml
+  wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/loki.yaml
+  wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/promtail.yaml
+  sed -i "s/34.125.24.130/$BUILD_SERVER_PUBIP/g" kubemon.yaml
+  sed -i -e "s/quay.io/$BUILD_SERVER_IP:5000/g" -e "s/k8s.gcr.io/$BUILD_SERVER_IP:5000/g" kubemon.yaml
+  sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kubelog.yaml
+  sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" promtail.yaml
+
   echo - Setup nfs
   # share out opt directory
   echo "/opt/rancher *(ro)" > /etc/exports
@@ -576,12 +617,10 @@ function base () {
   curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/install.sh
   curl -OL http://$BUILD_SERVER_IP:8080/iso/centos8-remote.repo
 
-  rm -rf /etc/yum.repos.d/* 
-  cp centos8-remote.repo /etc/yum.repos.d/centos8.repo
-  chmod 644 /etc/yum.repos.d/centos8.repo
-
   ## For Debian distribution
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   echo "# Local APT Repository" >> /etc/apt/sources.list 
+   echo "deb [allow-insecure-yes] http://$BUILD_SERVER_IP:8080/ubuntu-repo ./" >> /etc/apt/sources.list
    apt update -y
    apt install apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils -y
    # Stopping and disabling firewalld by running the commands on all servers
@@ -595,6 +634,9 @@ function base () {
    systemctl stop firewalld; systemctl disable firewalld
    setenforce 0
    sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+   rm -rf /etc/yum.repos.d/* 
+   cp centos8-remote.repo /etc/yum.repos.d/centos8.repo
+   chmod 644 /etc/yum.repos.d/centos8.repo
    yum install -y git curl wget bind-utils jq httpd-tools zip unzip nfs-utils go nmap telnet dos2unix zstd container-selinux libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils iptables skopeo
    #yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
    #systemctl enable --now iscsid
@@ -799,39 +841,25 @@ EOF
 
 ################## Cluster login from Build Server #####################
 function kubelogin () {
-echo - Kubernetes login setup
-if ! command -v kubectl &> /dev/null;
-  then
-    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod 755 kubectl && mv kubectl /usr/local/bin/
-fi 
-#scp -i <PEM file location> <USER>@<MASTER1>:/etc/rancher/rke2/rke2.yaml .
-cp rke2.yaml kubeconfig
-sed -i "s/127.0.0.1/$LB_IP/g" kubeconfig
-export KUBECONFIG=./kubeconfig
-kubectl get no
+ echo - Kubernetes login setup
+ #scp -i <PEM file location> <USER>@<MASTER1>:/etc/rancher/rke2/rke2.yaml .
+ cp rke2.yaml kubeconfig
+ sed -i "s/127.0.0.1/$LB_IP/g" kubeconfig
+ export KUBECONFIG=./kubeconfig
+ kubectl get no
 
-echo - Kubernetes Monitoring Setup
-cd /opt/rancher/images/others/
-wget -q https://raw.githubusercontent.com/cloudcafetech/AI-for-K8S/main/kubemon.yaml
-wget -q https://github.com/cloudcafetech/kubesetup/raw/master/monitoring/dashboard/pod-monitoring.json
-wget -q https://github.com/cloudcafetech/kubesetup/raw/master/monitoring/dashboard/kube-monitoring-overview.json
-wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/kubelog.yaml
-wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/loki.yaml
-wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/promtail.yaml
+ echo - Kubernetes Monitoring Setup
+ cd /opt/rancher/images/others/
+ kubectl create ns monitoring
+ kubectl create configmap grafana-dashboards -n monitoring --from-file=pod-monitoring.json --from-file=kube-monitoring-overview.json
+ kubectl create -f kubemon.yaml -n monitoring
 
-sed -i "s/34.125.24.130/$BUILD_SERVER_PUBIP/g" kubemon.yaml
-sed -i -e "s/quay.io/$BUILD_SERVER_IP:5000/g" -e "s/k8s.gcr.io/$BUILD_SERVER_IP:5000/g" kubemon.yaml
-kubectl create ns monitoring
-kubectl create configmap grafana-dashboards -n monitoring --from-file=pod-monitoring.json --from-file=kube-monitoring-overview.json
-kubectl create -f kubemon.yaml -n monitoring
-
-sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kubelog.yaml
-sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" promtail.yaml
-kubectl create ns logging
-kubectl create secret generic loki -n logging --from-file=loki.yaml
-kubectl create -f kubelog.yaml -n logging
-kubectl delete ds loki-fluent-bit-loki -n logging
-kubectl create -f promtail.yaml -n logging
+ echo - Kubernetes Logging Setup
+ kubectl create ns logging
+ kubectl create secret generic loki -n logging --from-file=loki.yaml
+ kubectl create -f kubelog.yaml -n logging
+ kubectl delete ds loki-fluent-bit-loki -n logging
+ kubectl create -f promtail.yaml -n logging
 
 }
 
