@@ -132,6 +132,14 @@ fi
 if [ ! -d /root/ubuntu-repo ]; then
   mkdir /root/ubuntu-repo
   chcon system_u:object_r:container_file_t:s0 /root/ubuntu-repo
+  cd /root/ubuntu-repo/
+  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/n/nfs-utils/nfs-common_1.3.4-2.5ubuntu3_amd64.deb
+  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libt/libtirpc/libtirpc3_1.2.5-1_amd64.deb
+  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/k/keyutils/keyutils_1.6-6ubuntu1_amd64.deb
+  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libt/libtirpc/libtirpc-common_1.2.5-1_all.deb
+  curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/nfs_offline_install.sh
+  sed -i "s/10.182.15.216/$BUILD_SERVER_IP/g" nfs_offline_install.sh
+  cd 
 fi
 
 if [[ ! -f /root/ubuntu-repo/wget_1.20.3-1ubuntu2_amd64.deb ]]; then 
@@ -620,8 +628,11 @@ function base () {
 
   ## For Debian distribution
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   curl -#OL curl http://$BUILD_SERVER_IP:8080/ubuntu-repo/nfs_offline_install.sh && chmod 755 nfs_offline_install.sh
+   ./nfs_offline_install.sh
+   sleep 10
+   #mount $BUILD_SERVER_IP:/opt/rancher /mnt/test
    echo "# Local APT Repository" >> /etc/apt/sources.list 
-   #echo "deb [allow-insecure-yes] http://$BUILD_SERVER_IP:8080/ubuntu-repo ./" >> /etc/apt/sources.list
    echo "deb [trusted=yes] http://$BUILD_SERVER_IP:8080/ubuntu-repo ./" >> /etc/apt/sources.list
    apt update -y
    apt install apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils -y
