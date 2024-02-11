@@ -628,13 +628,13 @@ function base () {
 
   ## For Debian distribution
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
-   curl -#OL curl http://$BUILD_SERVER_IP:8080/ubuntu-repo/nfs_offline_install.sh && chmod 755 nfs_offline_install.sh
+   curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/nfs_offline_install.sh && chmod 755 nfs_offline_install.sh
    ./nfs_offline_install.sh
    sleep 10
    if [ -z "$(ls -A /mnt/pkg)" ]; then
      mkdir /mnt/pkg
      mount $BUILD_SERVER_IP:/root/ubuntu-repo /mnt/pkg
-     cd /mnt/pkg && dpkg -i *
+     cd /mnt/pkg && dpkg -i *.deb
    fi 
    #echo "# Local APT Repository" >> /etc/apt/sources.list 
    #echo "deb [trusted=yes] http://$BUILD_SERVER_IP:8080/ubuntu-repo ./" >> /etc/apt/sources.list
