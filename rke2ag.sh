@@ -342,8 +342,10 @@ function imageload () {
    mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
    rm -rf linux-amd64 > /dev/null 2>&1
   fi
-
+ 
+  
   echo - add repos
+  cd /opt/rancher/helm/
   helm repo add jetstack https://charts.jetstack.io --force-update > /dev/null 2>&1
   helm repo add rancher-latest https://releases.rancher.com/server-charts/latest --force-update> /dev/null 2>&1
   helm repo add longhorn https://charts.longhorn.io --force-update> /dev/null 2>&1
@@ -448,7 +450,7 @@ function imageload () {
     crane --insecure copy $i $BUILD_SERVER_IP:5000/$pkg/$img
   done
 
-  # Verify Image upload
+  echo - Verify Image Upload
   crane --insecure catalog $BUILD_SERVER_IP:5000
 
 }
@@ -586,6 +588,7 @@ EOF
   wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/promtail.yaml
   sed -i "s/34.125.24.130/$BUILD_SERVER_PUBIP/g" kubemon.yaml
   sed -i -e "s/quay.io/$BUILD_SERVER_IP:5000/g" -e "s/k8s.gcr.io/$BUILD_SERVER_IP:5000/g" kubemon.yaml
+  sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kubemon.yaml
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kubelog.yaml
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" promtail.yaml
 
