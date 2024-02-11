@@ -592,6 +592,7 @@ EOF
   echo - Setup nfs
   # share out opt directory
   echo "/opt/rancher *(ro)" > /etc/exports
+  echo "/root/ubuntu-repo *(ro)" >> /etc/exports
   systemctl enable nfs-server.service && systemctl start nfs-server.service
 
   #imageupload
@@ -624,18 +625,21 @@ function base () {
   curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
   curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/registries.yaml
   curl -#OL http://$BUILD_SERVER_IP:8080/rke2_"$RKE_VERSION"/install.sh
-  curl -OL http://$BUILD_SERVER_IP:8080/iso/centos8-remote.repo
 
   ## For Debian distribution
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
    curl -#OL curl http://$BUILD_SERVER_IP:8080/ubuntu-repo/nfs_offline_install.sh && chmod 755 nfs_offline_install.sh
    ./nfs_offline_install.sh
    sleep 10
-   #mount $BUILD_SERVER_IP:/opt/rancher /mnt/test
-   echo "# Local APT Repository" >> /etc/apt/sources.list 
-   echo "deb [trusted=yes] http://$BUILD_SERVER_IP:8080/ubuntu-repo ./" >> /etc/apt/sources.list
-   apt update -y
-   apt install apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils -y
+   if [ -z "$(ls -A /mnt/pkg)" ]; then
+     mkdir /mnt/pkg
+     mount $BUILD_SERVER_IP:/root/ubuntu-repo /mnt/pkg
+     cd /mnt/pkg && dpkg -i *
+   fi 
+   #echo "# Local APT Repository" >> /etc/apt/sources.list 
+   #echo "deb [trusted=yes] http://$BUILD_SERVER_IP:8080/ubuntu-repo ./" >> /etc/apt/sources.list
+   #apt update -y
+   #apt install apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils -y
    # Stopping and disabling firewalld by running the commands on all servers
    systemctl stop ufw
    systemctl stop apparmor.service
@@ -647,6 +651,7 @@ function base () {
    systemctl stop firewalld; systemctl disable firewalld
    setenforce 0
    sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+   curl -OL http://$BUILD_SERVER_IP:8080/iso/centos8-remote.repo
    rm -rf /etc/yum.repos.d/* 
    cp centos8-remote.repo /etc/yum.repos.d/centos8.repo
    chmod 644 /etc/yum.repos.d/centos8.repo
