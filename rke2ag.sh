@@ -137,6 +137,7 @@ if [ ! -d /root/ubuntu-repo ]; then
   curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libt/libtirpc/libtirpc3_1.2.5-1_amd64.deb
   curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/k/keyutils/keyutils_1.6-6ubuntu1_amd64.deb
   curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libt/libtirpc/libtirpc-common_1.2.5-1_all.deb
+  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/n/nfs-utils/nfs-kernel-server_1.3.4-2.5ubuntu3_amd64.deb
   curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/nfs_offline_install.sh
   sed -i "s/10.182.15.216/$BUILD_SERVER_IP/g" nfs_offline_install.sh
   cd 
