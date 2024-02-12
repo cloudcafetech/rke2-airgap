@@ -489,7 +489,7 @@ function build () {
   mkdir -p /root/registry/data/auth
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
    OS=Ubuntu
-   apt install -y apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix ldap-utils haproxy apparmor 
+   apt install -y apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix ldap-utils haproxy apparmor nfs-kernel-server
   else
    chcon system_u:object_r:container_file_t:s0 /root/registry/data
    yum install -y git curl wget openldap openldap-clients bind-utils jq httpd-tools haproxy zip unzip go nmap telnet dos2unix zstd nfs-utils iptables libnetfilter_conntrack libnfnetlink libnftnl policycoreutils-python-utils cryptsetup iscsi-initiator-utils 
@@ -646,7 +646,7 @@ function base () {
    #echo "# Local APT Repository" >> /etc/apt/sources.list 
    #echo "deb [trusted=yes] http://$BUILD_SERVER_IP:8080/ubuntu-repo ./" >> /etc/apt/sources.list
    #apt update -y
-   #apt install apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils -y
+   #apt install apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils nfs-kernel-server -y
    # Stopping and disabling firewalld by running the commands on all servers
    systemctl stop ufw
    systemctl stop apparmor.service
@@ -918,14 +918,14 @@ function monlog () {
 
 ################################# longhorn ################################
 function longhorn () {
-  # deploy longhorn with local helm/images
+  # deploy longhorn with private registry images
   echo - deploying longhorn
   helm upgrade -i longhorn /opt/rancher/helm/longhorn-$LONGHORN_VERSION.tgz --namespace longhorn-system --create-namespace --set ingress.enabled=true --set ingress.host=longhorn.$DOMAIN --set global.cattle.systemDefaultRegistry=$BUILD_SERVER_IP:5000
 }
 
 ################################# neuvector ################################
 function neuvector () {
-  # deploy neuvector with local helm/images
+  # deploy neuvector with private registry images
   echo - deploying neuvector
   helm upgrade -i neuvector --namespace neuvector /opt/rancher/helm/core-$NEU_VERSION.tgz --create-namespace  --set imagePullSecrets=regsecret --set k3s.enabled=true --set k3s.runtimePath=/run/k3s/containerd/containerd.sock  --set manager.ingress.enabled=true --set controller.pvc.enabled=true --set manager.svc.type=ClusterIP --set controller.pvc.capacity=500Mi --set registry=$BUILD_SERVER_IP:5000 --set controller.image.repository=neuvector/controller --set enforcer.image.repository=neuvector/enforcer --set manager.image.repository=neuvector/manager --set cve.updater.image.repository=neuvector/updater --set manager.ingress.host=neuvector.$DOMAIN --set internal.certmanager.enabled=true
 }
