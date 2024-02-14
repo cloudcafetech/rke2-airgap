@@ -53,7 +53,7 @@ images=(
     "registry.k8s.io/kube-scheduler:${KUBE_RELEASE}"
     "registry.k8s.io/kube-proxy:${KUBE_RELEASE}"
     "registry.k8s.io/pause:3.9"
-    "registry.k8s.io/etcd:3.5.7-0"
+    "registry.k8s.io/etcd:3.5.10-0"
     "registry.k8s.io/coredns/coredns:v1.10.1"  
 )
 
@@ -155,8 +155,11 @@ if [ ! -d /root/ubuntu-repo ]; then
   mkdir /root/ubuntu-repo
   chcon system_u:object_r:container_file_t:s0 /root/ubuntu-repo
   cd /root/ubuntu-repo/
+
   curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/n/nfs-utils/nfs-common_1.3.4-2.5ubuntu3_amd64.deb
+  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libn/libnfsidmap/libnfsidmap2_0.25-5.1ubuntu1_amd64.deb
   curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libt/libtirpc/libtirpc3_1.2.5-1_amd64.deb
+  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/r/rpcbind/rpcbind_1.2.5-8_amd64.deb
   curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/k/keyutils/keyutils_1.6-6ubuntu1_amd64.deb
   curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libt/libtirpc/libtirpc-common_1.2.5-1_all.deb
   curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/n/nfs-utils/nfs-kernel-server_1.3.4-2.5ubuntu3_amd64.deb
@@ -661,23 +664,28 @@ function base () {
      mkdir /opt/k8s/k8s_"$KUBE_RELEASE"
   fi
 
-  cd /opt/k8s/k8s_"$KUBE_RELEASE"
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/cni-plugins-linux-${K8s_ARCH}-v1.3.0.tgz
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/crictl-v1.27.0-linux-${K8s_ARCH}.tar.gz
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/docker-ce-cli-23.0.6-1.el8.${ARCH}.rpm
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/containerd.io-1.6.9-3.1.el8.${ARCH}.rpm
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/docker-compose-plugin-2.17.3-1.el8.${ARCH}.rpm
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/docker-ce-rootless-extras-23.0.6-1.el8.${ARCH}.rpm
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/docker-ce-23.0.6-1.el8.${ARCH}.rpm
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/libcgroup-0.41-19.el8.${ARCH}.rpm
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/socat-1.7.3.3-2.el8.${ARCH}.rpm
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/conntrack-tools-1.4.4-11.el8.${ARCH}.rpm
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/kubeadm
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/kubectl
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/kubelet
-  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/10-kubeadm.conf
+  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   OS=Ubuntu 
+  else
+   cd /opt/k8s/k8s_"$KUBE_RELEASE"
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/cni-plugins-linux-${K8s_ARCH}-v1.3.0.tgz
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/crictl-v1.27.0-linux-${K8s_ARCH}.tar.gz
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/docker-ce-cli-23.0.6-1.el8.${ARCH}.rpm
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/containerd.io-1.6.9-3.1.el8.${ARCH}.rpm
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/docker-compose-plugin-2.17.3-1.el8.${ARCH}.rpm
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/docker-ce-rootless-extras-23.0.6-1.el8.${ARCH}.rpm
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/docker-ce-23.0.6-1.el8.${ARCH}.rpm
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/libcgroup-0.41-19.el8.${ARCH}.rpm
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/socat-1.7.3.3-2.el8.${ARCH}.rpm
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/conntrack-tools-1.4.4-11.el8.${ARCH}.rpm
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/kubeadm
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/kubectl
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/kubelet
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/10-kubeadm.conf
+  fi
 
   echo - Get Kubeadm images
+  cd /opt/k8s/k8s_"$KUBE_RELEASE"
   curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_coredns_coredns_v1.10.1.tar
   curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_etcd_3.5.7-0.tar
   curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-apiserver_v1.27.3.tar
