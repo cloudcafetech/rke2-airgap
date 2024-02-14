@@ -169,7 +169,7 @@ if [[ ! -f /root/ubuntu-repo/wget_1.20.3-1ubuntu2_amd64.deb ]]; then
  #curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ubuntu-pkg.sh && chmod 755 ubuntu-pkg.sh
  #docker run --name ubuntu -it -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-pkg.sh)"
  curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ubuntu-kubeadm-pkg.sh && chmod 755 ubuntu-kubeadm-pkg.sh
- docker run --name ubuntu -it -e K8S_VER=$K8S -v $(pwd):/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
+ docker run --name ubuntu -it -e K8S_VER=$K8S -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
  sleep 10
  docker rm ubuntu
 fi 
