@@ -155,7 +155,6 @@ if [ ! -d /root/ubuntu-repo ]; then
   mkdir /root/ubuntu-repo
   chcon system_u:object_r:container_file_t:s0 /root/ubuntu-repo
   cd /root/ubuntu-repo/
-
   curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/n/nfs-utils/nfs-common_1.3.4-2.5ubuntu3_amd64.deb
   curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libn/libnfsidmap/libnfsidmap2_0.25-5.1ubuntu1_amd64.deb
   curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libt/libtirpc/libtirpc3_1.2.5-1_amd64.deb
@@ -666,6 +665,7 @@ function base () {
 
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
    OS=Ubuntu 
+   cd /opt/k8s/k8s_"$KUBE_RELEASE"
   else
    cd /opt/k8s/k8s_"$KUBE_RELEASE"
    curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/cni-plugins-linux-${K8s_ARCH}-v1.3.0.tgz
@@ -687,11 +687,11 @@ function base () {
   echo - Get Kubeadm images
   cd /opt/k8s/k8s_"$KUBE_RELEASE"
   curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_coredns_coredns_v1.10.1.tar
-  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_etcd_3.5.7-0.tar
-  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-apiserver_v1.27.3.tar
-  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-controller-manager_v1.27.3.tar
-  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-proxy_v1.27.3.tar
-  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-scheduler_v1.27.3.tar
+  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_etcd_3.5.10-0.tar
+  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-apiserver_${KUBE_RELEASE}.tar
+  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-controller-manager_${KUBE_RELEASE}.tar
+  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-proxy_${KUBE_RELEASE}.tar
+  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-scheduler_${KUBE_RELEASE}.tar
   curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_pause_3.9.tar
 
   # Disable swap
@@ -723,6 +723,7 @@ EOF
      mount $BUILD_SERVER_IP:/root/ubuntu-repo /mnt/pkg
      cd /mnt/pkg && dpkg -i *.deb
    fi 
+   apt-mark hold kubelet kubeadm kubectl
    #echo "# Local APT Repository" >> /etc/apt/sources.list 
    #echo "deb [trusted=yes] http://$BUILD_SERVER_IP:8080/ubuntu-repo ./" >> /etc/apt/sources.list
    #apt update -y
@@ -732,6 +733,18 @@ EOF
    systemctl stop apparmor.service
    systemctl disable --now ufw
    systemctl disable --now apparmor.service 
+   rm -rf /etc/containerd/config.toml 
+   mkdir -p /etc/containerd
+   containerd config default > /etc/containerd/config.toml 
+   sed -i -e 's\            SystemdCgroup = false\            SystemdCgroup = true\g' /etc/containerd/config.toml
+   sed -i 's/^disabled_plugins = \["cri"\]/#&/' /etc/containerd/config.toml
+   systemctl enable --now containerd
+   systemctl enable --now kubelet
+cat <<EOF | tee /etc/crictl.yaml
+runtime-endpoint: "unix:///run/containerd/containerd.sock"
+timeout: 0
+debug: false
+EOF
   ### For Redhat distribution
   else
    # Stopping and disabling firewalld & SELinux
@@ -780,6 +793,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
+  fi
 
    cd /opt/k8s/k8s_"$KUBE_RELEASE"
    for image in "${images[@]}"; do
@@ -791,7 +805,6 @@ EOF
     fi
    done
 
-  fi
 }
 
 ################################# Deploy Master 1 ################################
