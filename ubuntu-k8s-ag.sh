@@ -84,7 +84,7 @@ echo "runtime-endpoint: unix:///run/crio/crio.sock" > /etc/crictl.yaml
 # Set Cluster With Kubeadm
 #kubeadm config images pull --kubernetes-version v"$K8SV"
 #kubeadm config images list
-kubeadm init --kubernetes-version v"$K8SV" --ignore-preflight-errors=all
+kubeadm init --pod-network-cidr=10.244.0.0/16 --kubernetes-version v"$K8SV" --ignore-preflight-errors=all
 
 # setup Kube env
 mkdir -p $HOME/.kube
