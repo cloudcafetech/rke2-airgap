@@ -4,8 +4,9 @@
 # Can be typically run in docker to select the version you want like:
 # docker run -it -e K8S=1.26 -v $(pwd):/host ubuntu:20.04 bash -c "$(cat ./this_script.sh)"
 
-PACKAGES=(kubectl kubelet kubernetes-cni kubeadm apt-transport-https ca-certificates curl openssl selinux-utils cri-o cri-o-runc podman cri-tools socat ebtables conntrack gpg nmap) 
-# For containerd enable below & disable above
+# For crio
+#PACKAGES=(kubectl kubelet kubernetes-cni kubeadm apt-transport-https ca-certificates curl openssl selinux-utils cri-o cri-o-runc podman cri-tools socat ebtables conntrack gpg nmap) 
+# For containerd 
 #PACKAGES=(kubectl kubelet kubernetes-cni kubeadm apt-transport-https ca-certificates curl openssl libapparmor1 libc6 perl liberror-perl git-man less selinux-utils containerd.io docker-ce docker-ce-cli cri-tools socat ebtables conntrack gpg nfs-common nfs-kernel-server wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils) 
 
 OS=xUbuntu_20.04
