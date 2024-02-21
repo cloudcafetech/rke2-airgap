@@ -6,6 +6,10 @@
 
 #set -ebpf
 
+PKGCRIO=(kubectl kubelet kubernetes-cni kubeadm apt-transport-https ca-certificates curl selinux-utils cri-o cri-o-runc podman cri-tools socat ebtables conntrack gpg nmap) 
+# For containerd enable below & disable above
+PKGCOND=(kubectl kubelet kubernetes-cni kubeadm apt-transport-https ca-certificates curl libapparmor1 libc6 perl liberror-perl git-man less selinux-utils containerd.io docker-ce docker-ce-cli cri-tools socat ebtables conntrack gpg nfs-common nfs-kernel-server wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils) 
+
 BUILD_SERVER_PUBIP=`curl -s checkip.dyndns.org | sed -e 's/.*Current IP Address: //' -e 's/<.*$//'`
 BUILD_SERVER_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
 BUILD_SERVER_DNS=`hostname`
@@ -52,9 +56,12 @@ images=(
     "registry.k8s.io/kube-controller-manager:${KUBE_RELEASE}"
     "registry.k8s.io/kube-scheduler:${KUBE_RELEASE}"
     "registry.k8s.io/kube-proxy:${KUBE_RELEASE}"
+    "registry.k8s.io/pause:3.6"
+    "registry.k8s.io/pause:3.8"
     "registry.k8s.io/pause:3.9"
     "registry.k8s.io/etcd:3.5.10-0"
-    "registry.k8s.io/coredns/coredns:v1.10.1"  
+    "registry.k8s.io/etcd:3.5.9-0"
+    "registry.k8s.io/coredns/coredns:v1.10.1" 
 )
 
 ######  NO MOAR EDITS #######
@@ -167,14 +174,19 @@ if [ ! -d /root/ubuntu-repo ]; then
   cd 
 fi
 
+mkdir -p /root/ubuntu-repo/pkg
 if [[ ! -f /root/ubuntu-repo/wget_1.20.3-1ubuntu2_amd64.deb ]]; then 
  #curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ubuntu-pkg.sh && chmod 755 ubuntu-pkg.sh
- #docker run --name ubuntu -it -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-pkg.sh)"
+ #docker run --name ubuntu -it -v /root/ubuntu-repo/pkg:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-pkg.sh)"
  curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ubuntu-kubeadm-pkg.sh && chmod 755 ubuntu-kubeadm-pkg.sh
- docker run --name ubuntu -it -e K8S_VER=$K8S -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
+ docker run --name ubuntu -it -e K8S_VER=$K8S -e PACKAGES=$PKGCRIO  -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
+ #docker run --name ubuntu -it -e K8S_VER=$K8S -e PACKAGES=$PKGCOND  -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
  sleep 10
  docker rm ubuntu
 fi 
+
+tar -cvzf kube-pkg.tar.gz *.deb
+cp kube-pkg.tar.gz /root/ubuntu-repo/
 
 if [[ ! -d /var/www/html/ubuntu-repo ]]; then 
   mkdir -p /var/www/html/ubuntu-repo
@@ -561,18 +573,17 @@ function build () {
   mkdir -p /opt/k8s/{k8s_$KUBE_RELEASE,helm} /opt/k8s/images/{cert,rancher,longhorn,registry,flask,neuvector,others,kubeadm_"$KUBE_RELEASE"}
   cd /opt/k8s/k8s_$KUBE_RELEASE/
 
-cat <<EOF > /opt/k8s/k8s_$KUBE_RELEASE/registries.yaml
-mirrors:
-  docker.io:
-    endpoint:
-      - "http://$BUILD_SERVER_IP:5000"
-configs:
-  "$BUILD_SERVER_IP:5000":
-    auth:
-      username: admin
-      password: admin@2675
-    tls:
-      insecure_skip_verify: true
+cat <<EOF > /opt/k8s/k8s_$KUBE_RELEASE/registries.conf
+unqualified-search-registries = ["$BUILD_SERVER_IP:5000"]
+
+[[registry]]
+prefix = ""
+insecure = false
+blocked = false
+location = "$BUILD_SERVER_IP:5000"
+
+[[registry.mirror]]
+location = "$BUILD_SERVER_IP:5000"
 EOF
 
   echo -e "\nDownload Package RPMs"
@@ -634,6 +645,7 @@ EOF
     image_name=$(echo "$image" | sed 's|/|_|g' | sed 's/:/_/g')
     docker save -o "${image_name}.tar" "$image"
   done
+  tar -cvzf kube-image.tar.gz *.tar
 
   echo - Setup nfs
   # share out opt directory
@@ -666,6 +678,17 @@ function base () {
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
    OS=Ubuntu 
    cd /opt/k8s/k8s_"$KUBE_RELEASE"
+   echo - Get Kubeadm images and packages
+   curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/kube-image.tar.gz
+   curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/kube-pkg.tar.gz
+   curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registries.conf
+   mkdir images pkg
+   cd images
+   cp /opt/k8s/k8s_"$KUBE_RELEASE"/kube-image.tar.gz .
+   tar -zxvf kube-image.tar.gz
+   cd /opt/k8s/k8s_"$KUBE_RELEASE"/pkg
+   cp /opt/k8s/k8s_"$KUBE_RELEASE"/kube-pkg.tar.gz .
+   tar -zxvf kube-pkg.tar.gz
   else
    cd /opt/k8s/k8s_"$KUBE_RELEASE"
    curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/cni-plugins-linux-${K8s_ARCH}-v1.3.0.tgz
@@ -684,44 +707,39 @@ function base () {
    curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/10-kubeadm.conf
   fi
 
-  echo - Get Kubeadm images
-  cd /opt/k8s/k8s_"$KUBE_RELEASE"
-  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_coredns_coredns_v1.10.1.tar
-  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_etcd_3.5.10-0.tar
-  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-apiserver_${KUBE_RELEASE}.tar
-  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-controller-manager_${KUBE_RELEASE}.tar
-  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-proxy_${KUBE_RELEASE}.tar
-  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_kube-scheduler_${KUBE_RELEASE}.tar
-  curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registry.k8s.io_pause_3.9.tar
-
   # Disable swap
+  sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
   swapoff -a
-  sed -i.bak -r 's/(.+ swap .+)/#\1/' /etc/fstab
 
-cat <<EOF |sudo tee /etc/sysctl.d/kubernetes.conf
-net.bridge.bridge-nf-call-ip6tables = 1
-net.bridge.bridge-nf-call-iptables = 1
-net.ipv4.ip_forward = 1
-EOF
-
-cat <<EOF | sudo tee /etc/modules-load.d/containerd.conf 
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
 overlay
 br_netfilter
 EOF
 
   modprobe overlay
   modprobe br_netfilter
-  sysctl --system
+
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward                 = 1
+EOF
+
+  lsmod | grep br_netfilter
+  lsmod | grep overlay
+  sysctl net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 
   ## For Debian distribution
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
    curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/nfs_offline_install.sh && chmod 755 nfs_offline_install.sh
    ./nfs_offline_install.sh
    sleep 10
-   if [ -z "$(ls -A /mnt/pkg)" ]; then
-     mkdir /mnt/pkg
-     mount $BUILD_SERVER_IP:/root/ubuntu-repo /mnt/pkg
-     cd /mnt/pkg && dpkg -i *.deb
+   if [ -z "$(ls -A /opt/k8s/k8s_$KUBE_RELEASE/pkg)" ]; then
+     cd /opt/k8s/k8s_"$KUBE_RELEASE"/pkg
+     dpkg -i *.deb
+     #mkdir /mnt/pkg
+     #mount $BUILD_SERVER_IP:/root/ubuntu-repo /mnt/pkg
+     #cd /mnt/pkg && dpkg -i *.deb
    fi 
    apt-mark hold kubelet kubeadm kubectl
    #echo "# Local APT Repository" >> /etc/apt/sources.list 
@@ -733,18 +751,34 @@ EOF
    systemctl stop apparmor.service
    systemctl disable --now ufw
    systemctl disable --now apparmor.service 
-   rm -rf /etc/containerd/config.toml 
-   mkdir -p /etc/containerd
-   containerd config default > /etc/containerd/config.toml 
-   sed -i -e 's\            SystemdCgroup = false\            SystemdCgroup = true\g' /etc/containerd/config.toml
-   sed -i 's/^disabled_plugins = \["cri"\]/#&/' /etc/containerd/config.toml
-   systemctl enable --now containerd
-   systemctl enable --now kubelet
-cat <<EOF | tee /etc/crictl.yaml
-runtime-endpoint: "unix:///run/containerd/containerd.sock"
-timeout: 0
-debug: false
+
+   #rm -rf /etc/containerd/config.toml 
+   #mkdir -p /etc/containerd
+   #containerd config default > /etc/containerd/config.toml 
+   #sed -i -e 's\            SystemdCgroup = false\            SystemdCgroup = true\g' /etc/containerd/config.toml
+   #sed -i 's|    sandbox_image = "registry.k8s.io/pause:3.5"|    sandbox_image = "registry.k8s.io/pause:3.9"|g' /etc/containerd/config.toml
+   #sed -i 's/^disabled_plugins = \["cri"\]/#&/' /etc/containerd/config.toml
+   #systemctl enable --now containerd
+   #systemctl enable --now kubelet
+   #echo "runtime-endpoint: unix:///run/containerd/containerd.sock" > /etc/crictl.yaml
+   systemctl enable crio --now
+   sed -i 's|# cgroup_manager = "systemd"|  cgroup_manager = "systemd"|g' /etc/crio/crio.conf
+   sed -i 's|# pause_image = "registry.k8s.io/pause:3.6"|  pause_image = "registry.k8s.io/pause:3.9"|g' /etc/crio/crio.conf
+cat <<EOF > /opt/k8s/k8s_$KUBE_RELEASE/registries.conf
+unqualified-search-registries = ["$BUILD_SERVER_IP:5000"]
+
+[[registry]]
+prefix = ""
+insecure = false
+blocked = false
+location = "$BUILD_SERVER_IP:5000"
+
+[[registry.mirror]]
+location = "$BUILD_SERVER_IP:5000"
 EOF
+   echo "runtime-endpoint: unix:///run/crio/crio.sock" > /etc/crictl.yaml
+   systemctl restart crio
+
   ### For Redhat distribution
   else
    # Stopping and disabling firewalld & SELinux
@@ -768,15 +802,11 @@ EOF
    sed "s:/usr/bin:/usr/local/bin:g" 10-kubeadm.conf > /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
    mkdir -p /etc/containerd
    containerd config default > /etc/containerd/config.toml 
-   sed -i -e 's\            SystemdCgroup = false\            SystemdCgroup = true\g' /etc/containerd/config.toml
+   sed -i 's\            SystemdCgroup = false\            SystemdCgroup = true\g' /etc/containerd/config.toml
+   sed -i 's|    sandbox_image = "registry.k8s.io/pause:3.5"|    sandbox_image = "registry.k8s.io/pause:3.9"|g' /etc/containerd/config.toml
    sed -i 's/^disabled_plugins = \["cri"\]/#&/' /etc/containerd/config.toml
    systemctl enable --now containerd
-
-cat <<EOF | tee /etc/crictl.yaml
-runtime-endpoint: "unix:///run/containerd/containerd.sock"
-timeout: 0
-debug: false
-EOF
+   echo "runtime-endpoint: unix:///run/containerd/containerd.sock" > /etc/crictl.yaml
 
 cat <<EOF > /etc/systemd/system/kubelet.service
 [Unit]
@@ -799,7 +829,8 @@ EOF
    for image in "${images[@]}"; do
     tarfile=`echo "$image" | sed -e "s:/:_:g" | sed -e "s/:/_/g"`
     if [[ -f "$tarfile.tar" ]]; then
-      ctr -n k8s.io images import "$tarfile".tar
+      #ctr -n k8s.io images import "$tarfile".tar
+      podman load -i "$tarfile".tar
     else
       echo "File "$tarfile".tar not found!" 1>&2
     fi
