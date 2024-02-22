@@ -157,37 +157,6 @@ EOF
  umount /mnt/iso
 fi
 
-# Download Packages for Ubuntu 20.04 
-if [ ! -d /root/ubuntu-repo ]; then
-  mkdir /root/ubuntu-repo
-  chcon system_u:object_r:container_file_t:s0 /root/ubuntu-repo
-  cd /root/ubuntu-repo/
-  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/n/nfs-utils/nfs-common_1.3.4-2.5ubuntu3_amd64.deb
-  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libn/libnfsidmap/libnfsidmap2_0.25-5.1ubuntu1_amd64.deb
-  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libt/libtirpc/libtirpc3_1.2.5-1_amd64.deb
-  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/r/rpcbind/rpcbind_1.2.5-8_amd64.deb
-  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/k/keyutils/keyutils_1.6-6ubuntu1_amd64.deb
-  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libt/libtirpc/libtirpc-common_1.2.5-1_all.deb
-  curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/n/nfs-utils/nfs-kernel-server_1.3.4-2.5ubuntu3_amd64.deb
-  curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/nfs_offline_install.sh
-  sed -i "s/10.182.15.216/$BUILD_SERVER_IP/g" nfs_offline_install.sh
-  cd 
-fi
-
-mkdir -p /root/ubuntu-repo/pkg
-if [[ ! -f /root/ubuntu-repo/wget_1.20.3-1ubuntu2_amd64.deb ]]; then 
- #curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ubuntu-pkg.sh && chmod 755 ubuntu-pkg.sh
- #docker run --name ubuntu -it -v /root/ubuntu-repo/pkg:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-pkg.sh)"
- curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ubuntu-kubeadm-pkg.sh && chmod 755 ubuntu-kubeadm-pkg.sh
- docker run --name ubuntu -it -e K8S_VER=$K8S -e PACKAGES=$PKGCRIO  -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
- #docker run --name ubuntu -it -e K8S_VER=$K8S -e PACKAGES=$PKGCOND  -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
- sleep 10
- docker rm ubuntu
-fi 
-
-tar -cvzf kube-pkg.tar.gz *.deb
-cp kube-pkg.tar.gz /root/ubuntu-repo/
-
 if [[ ! -d /var/www/html/ubuntu-repo ]]; then 
   mkdir -p /var/www/html/ubuntu-repo
   cp -vaR /root/ubuntu-repo /var/www/html/
@@ -646,6 +615,35 @@ EOF
     docker save -o "${image_name}.tar" "$image"
   done
   tar -cvzf kube-image.tar.gz *.tar
+
+  echo - Download NFS Packages for Ubuntu 20.04 
+  if [ ! -d /root/ubuntu-repo ]; then
+    mkdir /root/ubuntu-repo/pkg
+    chcon system_u:object_r:container_file_t:s0 /root/ubuntu-repo
+    cd /root/ubuntu-repo/
+    curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/n/nfs-utils/nfs-common_1.3.4-2.5ubuntu3_amd64.deb
+    curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libn/libnfsidmap/libnfsidmap2_0.25-5.1ubuntu1_amd64.deb
+    curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libt/libtirpc/libtirpc3_1.2.5-1_amd64.deb
+    curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/r/rpcbind/rpcbind_1.2.5-8_amd64.deb
+    curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/k/keyutils/keyutils_1.6-6ubuntu1_amd64.deb
+    curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libt/libtirpc/libtirpc-common_1.2.5-1_all.deb
+    curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/n/nfs-utils/nfs-kernel-server_1.3.4-2.5ubuntu3_amd64.deb
+    curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/nfs_offline_install.sh
+    sed -i "s/10.182.15.216/$BUILD_SERVER_IP/g" nfs_offline_install.sh
+   cd 
+  fi
+
+  echo - Download Kube Packages for Ubuntu 20.04 
+  if [ -z "$(ls -A /root/ubuntu-repo/pkg)" ]; then
+    cd /root/ubuntu-repo/pkg
+    curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ubuntu-kubeadm-pkg.sh && chmod 755 ubuntu-kubeadm-pkg.sh
+    docker run --name ubuntu -it -e K8S_VER=$K8S -e PACKAGES=$PKGCRIO  -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
+    #docker run --name ubuntu -it -e K8S_VER=$K8S -e PACKAGES=$PKGCOND  -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
+    sleep 10
+    docker rm ubuntu
+    tar -cvzf kube-pkg.tar.gz *.deb
+    cp kube-pkg.tar.gz /root/ubuntu-repo/
+  fi 
 
   echo - Setup nfs
   # share out opt directory
