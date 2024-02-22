@@ -6,10 +6,6 @@
 
 #set -ebpf
 
-PKGCRIO=(kubectl kubelet kubernetes-cni kubeadm apt-transport-https ca-certificates curl selinux-utils cri-o cri-o-runc podman cri-tools socat ebtables conntrack gpg nmap) 
-# For containerd enable below & disable above
-PKGCOND=(kubectl kubelet kubernetes-cni kubeadm apt-transport-https ca-certificates curl libapparmor1 libc6 perl liberror-perl git-man less selinux-utils containerd.io docker-ce docker-ce-cli cri-tools socat ebtables conntrack gpg nfs-common nfs-kernel-server wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils) 
-
 BUILD_SERVER_PUBIP=`curl -s checkip.dyndns.org | sed -e 's/.*Current IP Address: //' -e 's/<.*$//'`
 BUILD_SERVER_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
 BUILD_SERVER_DNS=`hostname`
@@ -42,7 +38,8 @@ fi
 CNI_PLUGINS_VERSION="v1.3.0"
 CRICTL_VERSION="v1.27.0"
 KUBE_RELEASE="v1.28.6"
-K8S=1.28.6-00
+K8S_VER=1.28.6-00
+K8S_VER_MJ=$(echo "$K8S_VER" | cut -c 1-4)
 RELEASE_VERSION="v0.15.1"
 K9S_VERSION="v0.27.4"
 CERT_VERSION=v1.13.3
@@ -121,21 +118,17 @@ systemctl start httpd;systemctl enable httpd
 #firewall-cmd --add-port=8080/tcp --permanent
 #firewall-cmd --reload
 
-# Download mount CentOS 8 ISO for CentOS
+# Mount CentOS 8 ISO for CentOS
 if [ ! -d /mnt/iso ]; then
-  mkdir /mnt/iso
+ mkdir /mnt/iso
 fi
-
-if [[ ! -f CentOS-Stream-8-x86_64-latest-dvd1.iso ]]; then 
- wget http://isoredirect.centos.org/centos/8-stream/isos/x86_64/CentOS-Stream-8-x86_64-latest-dvd1.iso
-fi 
 
 if [[ ! -f /mnt/iso/media.repo ]]; then 
  mount -t iso9660 -o ro,loop CentOS-Stream-8-x86_64-latest-dvd1.iso /mnt/iso
 fi 
 
 if [[ ! -f /var/www/html/iso/media.repo ]]; then 
- cp -vaR /mnt/iso /var/www/html/
+cp -vaR /mnt/iso /var/www/html/
 
 cat <<EOF > /var/www/html/iso/centos8-remote.repo
 [centos8_Appstream_remote]
@@ -151,10 +144,10 @@ name=CentOS Linux BaseOS remote
 enable=1
 EOF
 
- chcon -R -t httpd_sys_content_t /var/www/html/iso
- chown -R apache: /var/www/html/iso/
- chmod 755 /var/www/html/iso
- umount /mnt/iso
+chcon -R -t httpd_sys_content_t /var/www/html/iso
+chown -R apache: /var/www/html/iso/
+chmod 755 /var/www/html/iso
+umount /mnt/iso
 fi
 
 if [[ ! -d /var/www/html/ubuntu-repo ]]; then 
@@ -168,6 +161,7 @@ fi
 cp -vaR /opt/k8s/k8s_"$KUBE_RELEASE" /var/www/html/
 cp -vaR /opt/k8s/images/kubeadm_"$KUBE_RELEASE" /var/www/html/
 cp /opt/k8s/k8sag.sh /var/www/html/k8s_"$KUBE_RELEASE"/
+cp /opt/k8s/images/kubeadm_"$KUBE_RELEASE"/kube-image.tar.gz /var/www/html/k8s_"$KUBE_RELEASE"/
 
 chcon -R -t httpd_sys_content_t /var/www/html/k8s_"$KUBE_RELEASE"
 chown -R apache: /var/www/html/k8s_"$KUBE_RELEASE"/
@@ -603,9 +597,13 @@ EOF
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kubelog.yaml
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" promtail.yaml
 
-  echo - Get Certmanager yamls
+  echo - Get Certmanager yaml
   wget -q https://github.com/cert-manager/cert-manager/releases/download/$CERT_VERSION/cert-manager.yaml 
   sed -i -e "s/quay.io/$BUILD_SERVER_IP:5000/g" cert-manager.yaml
+
+  echo - Get Flannel yaml
+  wget -q https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+  sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kube-flannel.yml
 
   echo - Get Kubeadm images
   cd /opt/k8s/images/kubeadm_"$KUBE_RELEASE"
@@ -617,9 +615,8 @@ EOF
   tar -cvzf kube-image.tar.gz *.tar
 
   echo - Download NFS Packages for Ubuntu 20.04 
-  if [ ! -d /root/ubuntu-repo ]; then
-    mkdir /root/ubuntu-repo/pkg
-    chcon system_u:object_r:container_file_t:s0 /root/ubuntu-repo
+  mkdir -p /root/ubuntu-repo/pkg
+  if [ ! -f /root/ubuntu-repo/nfs-common_1.3.4-2.5ubuntu3_amd64.deb ]; then
     cd /root/ubuntu-repo/
     curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/n/nfs-utils/nfs-common_1.3.4-2.5ubuntu3_amd64.deb
     curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/libn/libnfsidmap/libnfsidmap2_0.25-5.1ubuntu1_amd64.deb
@@ -634,15 +631,22 @@ EOF
   fi
 
   echo - Download Kube Packages for Ubuntu 20.04 
-  if [ -z "$(ls -A /root/ubuntu-repo/pkg)" ]; then
+  if [ ! -f /root/ubuntu-repo/pkg/kubectl*.deb ]; then
+    chcon system_u:object_r:container_file_t:s0 /root/ubuntu-repo/pkg
     cd /root/ubuntu-repo/pkg
     curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ubuntu-kubeadm-pkg.sh && chmod 755 ubuntu-kubeadm-pkg.sh
-    docker run --name ubuntu -it -e K8S_VER=$K8S -e PACKAGES=$PKGCRIO  -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
-    #docker run --name ubuntu -it -e K8S_VER=$K8S -e PACKAGES=$PKGCOND  -v /root/ubuntu-repo:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
+    docker rm ubuntu
+    docker run --name ubuntu -it -e K8S=$K8S_VER_MJ -v /root/ubuntu-repo/pkg:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
     sleep 10
     docker rm ubuntu
     tar -cvzf kube-pkg.tar.gz *.deb
     cp kube-pkg.tar.gz /root/ubuntu-repo/
+  fi 
+
+  echo - Download CentOS 8 ISO
+  cd /opt/k8s
+  if [[ ! -f CentOS-Stream-8-x86_64-latest-dvd1.iso ]]; then 
+   wget http://isoredirect.centos.org/centos/8-stream/isos/x86_64/CentOS-Stream-8-x86_64-latest-dvd1.iso
   fi 
 
   echo - Setup nfs
@@ -732,18 +736,20 @@ EOF
    curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/nfs_offline_install.sh && chmod 755 nfs_offline_install.sh
    ./nfs_offline_install.sh
    sleep 10
-   if [ -z "$(ls -A /opt/k8s/k8s_$KUBE_RELEASE/pkg)" ]; then
-     cd /opt/k8s/k8s_"$KUBE_RELEASE"/pkg
-     dpkg -i *.deb
-     #mkdir /mnt/pkg
-     #mount $BUILD_SERVER_IP:/root/ubuntu-repo /mnt/pkg
-     #cd /mnt/pkg && dpkg -i *.deb
-   fi 
+   cd /opt/k8s/k8s_"$KUBE_RELEASE"/pkg
+   dpkg -i *.deb
+
+   #mkdir /mnt/pkg
+   #mount $BUILD_SERVER_IP:/root/ubuntu-repo /mnt/pkg
+   #cd /mnt/pkg && dpkg -i *.deb
+
    apt-mark hold kubelet kubeadm kubectl
+
    #echo "# Local APT Repository" >> /etc/apt/sources.list 
    #echo "deb [trusted=yes] http://$BUILD_SERVER_IP:8080/ubuntu-repo ./" >> /etc/apt/sources.list
    #apt update -y
    #apt install apt-transport-https ca-certificates gpg nfs-common curl wget git net-tools unzip jq zip nmap telnet dos2unix apparmor ldap-utils nfs-kernel-server -y
+
    # Stopping and disabling firewalld by running the commands on all servers
    systemctl stop ufw
    systemctl stop apparmor.service
@@ -759,21 +765,12 @@ EOF
    #systemctl enable --now containerd
    #systemctl enable --now kubelet
    #echo "runtime-endpoint: unix:///run/containerd/containerd.sock" > /etc/crictl.yaml
+
    systemctl enable crio --now
    sed -i 's|# cgroup_manager = "systemd"|  cgroup_manager = "systemd"|g' /etc/crio/crio.conf
    sed -i 's|# pause_image = "registry.k8s.io/pause:3.6"|  pause_image = "registry.k8s.io/pause:3.9"|g' /etc/crio/crio.conf
-cat <<EOF > /opt/k8s/k8s_$KUBE_RELEASE/registries.conf
-unqualified-search-registries = ["$BUILD_SERVER_IP:5000"]
-
-[[registry]]
-prefix = ""
-insecure = false
-blocked = false
-location = "$BUILD_SERVER_IP:5000"
-
-[[registry.mirror]]
-location = "$BUILD_SERVER_IP:5000"
-EOF
+   cp /etc/containers/registries.conf /etc/containers/registries.conf_ori
+   cp /opt/k8s/k8s_"$KUBE_RELEASE"/registries.conf /etc/containers/registries.conf
    echo "runtime-endpoint: unix:///run/crio/crio.sock" > /etc/crictl.yaml
    systemctl restart crio
 
@@ -823,7 +820,7 @@ WantedBy=multi-user.target
 EOF
   fi
 
-   cd /opt/k8s/k8s_"$KUBE_RELEASE"
+   cd /opt/k8s/k8s_"$KUBE_RELEASE/images"
    for image in "${images[@]}"; do
     tarfile=`echo "$image" | sed -e "s:/:_:g" | sed -e "s/:/_/g"`
     if [[ -f "$tarfile.tar" ]]; then
