@@ -769,8 +769,14 @@ EOF
    systemctl enable crio --now
    sed -i 's|# cgroup_manager = "systemd"|  cgroup_manager = "systemd"|g' /etc/crio/crio.conf
    sed -i 's|# pause_image = "registry.k8s.io/pause:3.6"|  pause_image = "registry.k8s.io/pause:3.9"|g' /etc/crio/crio.conf
-   cp /etc/containers/registries.conf /etc/containers/registries.conf_ori
-   cp /opt/k8s/k8s_"$KUBE_RELEASE"/registries.conf /etc/containers/registries.conf
+
+   # Due to tech challenges not able modify in one liner command, use 3 below command
+   sed -i '/insecure_registries =/a   insecure_registries = [ "RSERVERIP:5000" ]' /etc/crio/crio.conf
+   sed -i "s/RSERVERIP/$BUILD_SERVER_IP/g" /etc/crio/crio.conf
+   sed -i 's|insecure_registries|  insecure_registries|g' /etc/crio/crio.conf
+
+   #cp /etc/containers/registries.conf /etc/containers/registries.conf_ori
+   #cp /opt/k8s/k8s_"$KUBE_RELEASE"/registries.conf /etc/containers/registries.conf
    echo "runtime-endpoint: unix:///run/crio/crio.sock" > /etc/crictl.yaml
    systemctl restart crio
 
