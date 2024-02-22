@@ -11,6 +11,8 @@ BUILD_SERVER_IP=`ip -o -4 addr list eth0 | awk '{print $4}' | cut -d/ -f1`
 BUILD_SERVER_DNS=`hostname`
 LB_IP=
 
+TOKEN=tun848.2hlz8uo37jgy5zqt
+
 MASTERDNS1=master1
 MASTERDNS2=master2
 MASTERDNS3=master3
@@ -162,6 +164,8 @@ cp -vaR /opt/k8s/k8s_"$KUBE_RELEASE" /var/www/html/
 cp -vaR /opt/k8s/images/kubeadm_"$KUBE_RELEASE" /var/www/html/
 cp /opt/k8s/k8sag.sh /var/www/html/k8s_"$KUBE_RELEASE"/
 cp /opt/k8s/images/kubeadm_"$KUBE_RELEASE"/kube-image.tar.gz /var/www/html/k8s_"$KUBE_RELEASE"/
+cp /opt/k8s/k8s_$KUBE_RELEASE/registries.conf /var/www/html/k8s_"$KUBE_RELEASE"/
+cp /opt/k8s/images/others/kube-flannel.yml /var/www/html/k8s_"$KUBE_RELEASE"/
 
 chcon -R -t httpd_sys_content_t /var/www/html/k8s_"$KUBE_RELEASE"
 chown -R apache: /var/www/html/k8s_"$KUBE_RELEASE"/
@@ -407,8 +411,8 @@ function imageload () {
   crane --insecure copy debian:9 $BUILD_SERVER_IP:5000/debian:9
   crane --insecure copy k8s.gcr.io/addon-resizer:1.7 $BUILD_SERVER_IP:5000/addon-resizer:1.7
   crane --insecure copy prom/alertmanager:v0.16.2 $BUILD_SERVER_IP:5000/prometheus/alertmanager:v0.16.0
-  crane --insecure copy flannel/flannel:v0.22.0 $BUILD_SERVER_IP:5000/flannel/flannel:v0.22.0
-  crane --insecure copy flannel/flannel-cni-plugin:v1.1.2 $BUILD_SERVER_IP:5000/flannel/flannel-cni-plugin:v1.1.2
+  crane --insecure copy flannel/flannel:v0.24.2 $BUILD_SERVER_IP:5000/flannel/flannel:v0.24.2
+  crane --insecure copy flannel/flannel-cni-plugin:v1.4.0-flannel1 $BUILD_SERVER_IP:5000/flannel/flannel-cni-plugin:v1.4.0-flannel1
 
   echo - Load images for Longhorn
   for i in $(cat /opt/k8s/images/longhorn/longhorn-images.txt); do
@@ -447,26 +451,6 @@ function imageload () {
 
   echo - Verify Image Upload
   crane --insecure catalog $BUILD_SERVER_IP:5000
-
-}
-
-################################# Compress All ################################
-function compressall () {
-
-  cd /opt/rancher/
-  echo - compress all the things
-  if ! test -f /opt/rke2_rancher_longhorn.zst; then
-   tar -I zstd -vcf /opt/rke2_rancher_longhorn.zst $(ls) > /dev/null 2>&1
-  fi
-
-  # look at adding encryption - https://medium.com/@lumjjb/encrypting-container-images-with-skopeo-f733afb1aed4  
-
-  echo "------------------------------------------------------------------"
-  echo " to uncompress : "
-  echo "   yum install -y zstd"
-  echo "   mkdir /opt/rancher"
-  echo "   tar -I zstd -vxf rke2_rancher_longhorn.zst -C /opt/rancher"
-  echo "------------------------------------------------------------------"
 
 }
 
@@ -537,16 +521,11 @@ function build () {
   cd /opt/k8s/k8s_$KUBE_RELEASE/
 
 cat <<EOF > /opt/k8s/k8s_$KUBE_RELEASE/registries.conf
-unqualified-search-registries = ["$BUILD_SERVER_IP:5000"]
+[registries.search]
+registries = ['$BUILD_SERVER_IP:5000']
 
-[[registry]]
-prefix = ""
-insecure = false
-blocked = false
-location = "$BUILD_SERVER_IP:5000"
-
-[[registry.mirror]]
-location = "$BUILD_SERVER_IP:5000"
+[registries.insecure]
+registries = ['$BUILD_SERVER_IP:5000']
 EOF
 
   echo -e "\nDownload Package RPMs"
@@ -569,7 +548,6 @@ EOF
   curl -O https://www.rpmfind.net/linux/centos/8-stream/AppStream/${ARCH}/os/Packages/socat-1.7.3.3-2.el8.${ARCH}.rpm
   curl -O http://mirror.centos.org/centos/8-stream/BaseOS/${ARCH}/os/Packages/conntrack-tools-1.4.4-11.el8.${ARCH}.rpm
   curl -LO "https://github.com/derailed/k9s/releases/download/${K9S_VERSION}/k9s_Linux_${K8s_ARCH}.tar.gz"
-  curl -LO https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
 
   echo - Checking helm 
   if ! command -v helm &> /dev/null;
@@ -602,7 +580,7 @@ EOF
   sed -i -e "s/quay.io/$BUILD_SERVER_IP:5000/g" cert-manager.yaml
 
   echo - Get Flannel yaml
-  wget -q https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+  wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/kube-flannel.yml
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kube-flannel.yml
 
   echo - Get Kubeadm images
@@ -684,6 +662,7 @@ function base () {
    curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/kube-image.tar.gz
    curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/kube-pkg.tar.gz
    curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registries.conf
+   curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/kube-flannel.yml
    mkdir images pkg
    cd images
    cp /opt/k8s/k8s_"$KUBE_RELEASE"/kube-image.tar.gz .
@@ -737,6 +716,7 @@ EOF
    ./nfs_offline_install.sh
    sleep 10
    cd /opt/k8s/k8s_"$KUBE_RELEASE"/pkg
+   rm -rf openssl* 
    dpkg -i *.deb
 
    #mkdir /mnt/pkg
@@ -770,13 +750,13 @@ EOF
    sed -i 's|# cgroup_manager = "systemd"|  cgroup_manager = "systemd"|g' /etc/crio/crio.conf
    sed -i 's|# pause_image = "registry.k8s.io/pause:3.6"|  pause_image = "registry.k8s.io/pause:3.9"|g' /etc/crio/crio.conf
 
-   # Due to tech challenges not able modify in one liner command, use 3 below command
+   # Due to technical challenges not able modify in one liner command, use 3 below command
    sed -i '/insecure_registries =/a   insecure_registries = [ "RSERVERIP:5000" ]' /etc/crio/crio.conf
    sed -i "s/RSERVERIP/$BUILD_SERVER_IP/g" /etc/crio/crio.conf
    sed -i 's|insecure_registries|  insecure_registries|g' /etc/crio/crio.conf
 
-   #cp /etc/containers/registries.conf /etc/containers/registries.conf_ori
-   #cp /opt/k8s/k8s_"$KUBE_RELEASE"/registries.conf /etc/containers/registries.conf
+   cp /etc/containers/registries.conf /etc/containers/registries.conf_ori
+   cp /opt/k8s/k8s_"$KUBE_RELEASE"/registries.conf /etc/containers/registries.conf
    echo "runtime-endpoint: unix:///run/crio/crio.sock" > /etc/crictl.yaml
    systemctl restart crio
 
@@ -825,7 +805,8 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
   fi
-
+ 
+   echo - Download K8S Images
    cd /opt/k8s/k8s_"$KUBE_RELEASE/images"
    for image in "${images[@]}"; do
     tarfile=`echo "$image" | sed -e "s:/:_:g" | sed -e "s/:/_/g"`
@@ -837,6 +818,9 @@ EOF
     fi
    done
 
+   echo - Private registry login
+   podman login -u admin -p admin@2675 $BUILD_SERVER_IP:5000
+
 }
 
 ################################# Deploy Master 1 ################################
@@ -845,70 +829,29 @@ function deploy_control1 () {
 
   base
 
-  # Setting up Kubernetes Master using RKE2
-  if [ ! -d  /etc/rancher/rke2 ]; then
-     mkdir -p /etc/rancher/rke2/  
-  fi
-  if [ ! -d  /var/lib/rancher/rke2/server/manifests ]; then
-     mkdir -p /var/lib/rancher/rke2/server/manifests/  
-  fi
-  if [ ! -d  /var/lib/rancher/rke2/agent/images ]; then
-     mkdir -p /var/lib/rancher/rke2/agent/images 
-  fi
-  cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
+  # Setting up Kubernetes Master using Kubeadm
 
-cat << EOF >  /etc/rancher/rke2/config.yaml
-token: pkls-secret
-write-kubeconfig-mode: "0644"
-cluster-cidr: 192.168.0.0/16
-service-cidr: 192.167.0.0/16
-node-label:
-- "region=master"
-tls-san:
-  - "$LB_IP"
-  - "$MASTERDNS1"
-  - "$MASTERDNS2"
-  - "$MASTERDNS3"
-  - "$MASTERIP1"
-  - "$MASTERIP2"
-  - "$MASTERIP3"
-disable:
-  - rke2-snapshot-controller
-  - rke2-snapshot-controller-crd
-  - rke2-snapshot-validation-webhook
-#  - rke2-ingress-nginx
-#  - rke2-coredns
-#  - rke2-metrics-server
-#node-taint:
-  #- "CriticalAddonsOnly=true:NoExecute"
-EOF
-
-  echo - Install rke2
-  cd /opt/rancher/rke2_$RKE_VERSION
-  chmod 755 ./install.sh
-
- # insall rke2 - stig'd
-  INSTALL_RKE2_ARTIFACT_PATH=/opt/rancher/rke2_"$RKE_VERSION" sh /opt/rancher/rke2_"$RKE_VERSION"/install.sh 
-  #yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
-  systemctl enable --now rke2-server.service
-
+  sleep 10
+  kubeadm init --token=$TOKEN --pod-network-cidr=10.244.0.0/16 --kubernetes-version $KUBE_RELEASE --control-plane-endpoint "$LB_IP:8443" --upload-certs --ignore-preflight-errors=all
+  #kubeadm init --token=$TOKEN --pod-network-cidr=10.244.0.0/16 --kubernetes-version $KUBE_RELEASE --ignore-preflight-errors=all | grep -Ei "kubeadm join|discovery-token-ca-cert-hash" 2>&1 | tee kubeadm-output.txt
   sleep 30
-
-  mkdir ~/.kube
+  mkdir $HOME/.kube
+  cp /etc/kubernetes/admin.conf $HOME/.kube/config
+  chown $(id -u):$(id -g) $HOME/.kube/config
+  export KUBECONFIG=$HOME/.kube/config
+  echo "export KUBECONFIG=$HOME/.kube/config" >> $HOME/.bash_profile
+  echo "alias oc=/usr/bin/kubectl" >> /root/.bash_profile
   ln -s /etc/rancher/rke2/rke2.yaml ~/.kube/config  
-  chmod 600 /root/.kube/config
-  ln -s /var/lib/rancher/rke2/agent/etc/crictl.yaml /etc/crictl.yaml
-  export PATH=/var/lib/rancher/rke2/bin:$PATH
-  echo "export PATH=/var/lib/rancher/rke2/bin:$PATH" >> $HOME/.bash_profile
-  echo "alias oc=/var/lib/rancher/rke2/bin/kubectl" >> $HOME/.bash_profile
-
-  # wait and add link
-  #echo "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml CRI_CONFIG_FILE=/var/lib/rancher/rke2/agent/etc/crictl.yaml PATH=$PATH:/var/lib/rancher/rke2/bin" >> ~/.bashrc
-  #ln -s /var/run/k3s/containerd/containerd.sock /var/run/containerd/containerd.sock
-  #source ~/.bashrc
-
+  chmod 600 $HOME/.kube/config
+  cp $HOME/.kube/config /home/k8s-aws/
+ 
   sleep 5
 
+  echo - Deploy Flannel Networking
+  #curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/kube-flannel.yml
+  cd /opt/k8s/k8s_"$KUBE_RELEASE"
+  kubectl create -f kube-flannel.yml
+  
   echo - unpack helm
   mkdir /mnt/test
   mount $BUILD_SERVER_IP:/opt/rancher /mnt/test
@@ -926,71 +869,8 @@ function deploy_control23 () {
 
   base
 
-  # Setting up Kubernetes Master using RKE2
-  if [ ! -d  /etc/rancher/rke2 ]; then
-     mkdir -p /etc/rancher/rke2/  
-  fi
-  if [ ! -d  /var/lib/rancher/rke2/server/manifests ]; then
-     mkdir -p /var/lib/rancher/rke2/server/manifests/  
-  fi
-  if [ ! -d  /var/lib/rancher/rke2/agent/images ]; then
-     mkdir -p /var/lib/rancher/rke2/agent/images 
-  fi
-  cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
-
-cat << EOF >  /etc/rancher/rke2/config.yaml
-server: https://$MASTERIP1:9345
-token: pkls-secret
-write-kubeconfig-mode: "0644"
-cluster-cidr: 192.168.0.0/16
-service-cidr: 192.167.0.0/16
-node-label:
-- "region=master"
-tls-san:
-  - "$LB_IP"
-  - "$MASTERDNS1"
-  - "$MASTERDNS2"
-  - "$MASTERDNS3"
-  - "$MASTERIP1"
-  - "$MASTERIP2"
-  - "$MASTERIP3"
-#node-taint:
-  #- "CriticalAddonsOnly=true:NoExecute"
-EOF
-
-  echo - Install rke2
-  cd /opt/rancher/rke2_$RKE_VERSION
-
- # insall rke2 - stig'd
-  INSTALL_RKE2_ARTIFACT_PATH=/opt/rancher/rke2_"$RKE_VERSION" sh /opt/rancher/rke2_"$RKE_VERSION"/install.sh 
-  #yum install -y /opt/rancher/rke2_"$RKE_VERSION"/rke2-common-"$RKE_VERSION".rke2r1-0."$EL".x86_64.rpm /opt/rancher/rke2_"$RKE_VERSION"/rke2-selinux-0.17-1."$EL".noarch.rpm
-  systemctl enable --now rke2-server.service
-
-  sleep 30
-
-  mkdir ~/.kube
-  ln -s /etc/rancher/rke2/rke2.yaml ~/.kube/config  
-  chmod 600 /root/.kube/config
-  ln -s /var/lib/rancher/rke2/agent/etc/crictl.yaml /etc/crictl.yaml
-  export PATH=/var/lib/rancher/rke2/bin:$PATH
-  echo "export PATH=/var/lib/rancher/rke2/bin:$PATH" >> $HOME/.bash_profile
-  echo "alias oc=/var/lib/rancher/rke2/bin/kubectl" >> $HOME/.bash_profile
-
-  # wait and add link
-  #echo "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml CRI_CONFIG_FILE=/var/lib/rancher/rke2/agent/etc/crictl.yaml PATH=$PATH:/var/lib/rancher/rke2/bin" >> ~/.bashrc
-  #ln -s /var/run/k3s/containerd/containerd.sock /var/run/containerd/containerd.sock
-  #source ~/.bashrc
-
-  sleep 5
-
-  echo - unpack helm
-  mkdir /mnt/test
-  mount $BUILD_SERVER_IP:/opt/rancher /mnt/test
-  cp /mnt/test/helm/helm-v3.13.2-linux-amd64.tar.gz .
-  tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
-  mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
-
-  source ~/.bashrc
+  # Setting up Kubernetes Master 2 & 3 using Kubeadm
+  kubeadm join $LB_IP:8443 --token $TOKEN --discovery-token-unsafe-skip-ca-verification --control-plane --kubernetes-version $KUBE_RELEASE --ignore-preflight-errors=all
 
   echo "------------------------------------------------------------------"
 
@@ -1002,34 +882,10 @@ function deploy_worker () {
 
   base
 
-  # Setting up Kubernetes Master using RKE2
-  if [ ! -d  /etc/rancher/rke2 ]; then
-     mkdir -p /etc/rancher/rke2/  
-  fi
-  if [ ! -d  /var/lib/rancher/rke2/server/manifests ]; then
-     mkdir -p /var/lib/rancher/rke2/server/manifests/  
-  fi
-  if [ ! -d  /var/lib/rancher/rke2/agent/images ]; then
-     mkdir -p /var/lib/rancher/rke2/agent/images 
-  fi
-  cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
+  # Setting up Kubernetes Worker using Kubeadm
+  kubeadm join $LB_IP:6443 --token=$TOKEN --discovery-token-unsafe-skip-ca-verification --kubernetes-version $KUBE_RELEASE --ignore-preflight-errors=all
 
-cat << EOF >  /etc/rancher/rke2/config.yaml
-server: https://$MASTERIP1:9345
-token: pkls-secret
-node-label:
-- "region=worker"
-EOF
-
-  # install rke2
-  cd /opt/rancher
-  INSTALL_RKE2_ARTIFACT_PATH=/opt/rancher/rke2_"$RKE_VERSION" INSTALL_RKE2_TYPE=agent sh /opt/rancher/rke2_"$RKE_VERSION"/install.sh 
-  systemctl enable --now rke2-agent.service
-
-  # wait and add link
-  ln -s /var/lib/rancher/rke2/agent/etc/crictl.yaml /etc/crictl.yaml
-  export PATH=/var/lib/rancher/rke2/bin:$PATH
-  echo "export PATH=/var/lib/rancher/rke2/bin:$PATH" >> $HOME/.bash_profile
+  echo "------------------------------------------------------------------"
 
 }
 
@@ -1139,7 +995,6 @@ function usage () {
   echo " $0 longhorn # deploy longhorn"
   echo " $0 rancher # deploy rancher"
   echo " $0 validate # validate all the image locations"
-  echo " $0 compressall # Compress all data"
   echo ""
   exit 1
 }
@@ -1160,6 +1015,5 @@ case "$1" in
         rancher) rancher;;
         flask) flask;;
         validate) validate;;
-        compressall) compressall;;
         *) usage;;
 esac
