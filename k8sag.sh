@@ -846,6 +846,7 @@ function deploy_control1 () {
   echo "alias oc=/usr/bin/kubectl" >> /root/.bash_profile
   chmod 600 $HOME/.kube/config
   cp $HOME/.kube/config /home/k8s-aws/
+  chown k8s-aws:k8s-aws /home/k8s-aws/config
  
   sleep 5
 
@@ -892,6 +893,7 @@ function deploy_control23 () {
   echo "alias oc=/usr/bin/kubectl" >> /root/.bash_profile
   chmod 600 $HOME/.kube/config
   cp $HOME/.kube/config /home/k8s-aws/
+  chown k8s-aws:k8s-aws /home/k8s-aws/config
 
   echo "------------------------------------------------------------------"
 
