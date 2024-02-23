@@ -166,6 +166,7 @@ cp /opt/k8s/k8sag.sh /var/www/html/k8s_"$KUBE_RELEASE"/
 cp /opt/k8s/images/kubeadm_"$KUBE_RELEASE"/kube-image.tar.gz /var/www/html/k8s_"$KUBE_RELEASE"/
 cp /opt/k8s/k8s_$KUBE_RELEASE/registries.conf /var/www/html/k8s_"$KUBE_RELEASE"/
 cp /opt/k8s/images/others/kube-flannel.yml /var/www/html/k8s_"$KUBE_RELEASE"/
+cp /opt/k8s/helm/helm-v3.13.2-linux-amd64.tar.gz /var/www/html/k8s_"$KUBE_RELEASE"/
 
 chcon -R -t httpd_sys_content_t /var/www/html/k8s_"$KUBE_RELEASE"
 chown -R apache: /var/www/html/k8s_"$KUBE_RELEASE"/
@@ -245,7 +246,7 @@ backend k8s_api_backend
     server      $MASTERDNS2 $MASTERIP2:6443 check
     server      $MASTERDNS3 $MASTERIP3:6443 check
 
-# RKE2 Ingress - layer 4 tcp mode for each. Ingress Controller will handle layer 7.
+# K8S Ingress - layer 4 tcp mode for each. Ingress Controller will handle layer 7.
 frontend k8s_http_ingress_frontend
     bind :80
     default_backend k8s_http_ingress_backend
@@ -661,8 +662,9 @@ function base () {
    echo - Get Kubeadm images and packages
    curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/kube-image.tar.gz
    curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/kube-pkg.tar.gz
-   curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/registries.conf
-   curl -#OL http://$BUILD_SERVER_IP:8080/kubeadm_"$KUBE_RELEASE"/kube-flannel.yml
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/registries.conf
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/kube-flannel.yml
+   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/helm-v3.13.2-linux-amd64.tar.gz
    mkdir images pkg
    cd images
    cp /opt/k8s/k8s_"$KUBE_RELEASE"/kube-image.tar.gz .
@@ -696,7 +698,7 @@ cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
 overlay
 br_netfilter
 EOF
-
+ 
   modprobe overlay
   modprobe br_netfilter
 
@@ -706,6 +708,7 @@ net.bridge.bridge-nf-call-ip6tables = 1
 net.ipv4.ip_forward                 = 1
 EOF
 
+  sysctl --system
   lsmod | grep br_netfilter
   lsmod | grep overlay
   sysctl net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
@@ -832,8 +835,8 @@ function deploy_control1 () {
   # Setting up Kubernetes Master using Kubeadm
 
   sleep 10
-  kubeadm init --token=$TOKEN --pod-network-cidr=10.244.0.0/16 --kubernetes-version $KUBE_RELEASE --control-plane-endpoint "$LB_IP:8443" --upload-certs --ignore-preflight-errors=all
-  #kubeadm init --token=$TOKEN --pod-network-cidr=10.244.0.0/16 --kubernetes-version $KUBE_RELEASE --ignore-preflight-errors=all | grep -Ei "kubeadm join|discovery-token-ca-cert-hash" 2>&1 | tee kubeadm-output.txt
+  #kubeadm init --token=$TOKEN --pod-network-cidr=10.244.0.0/16 --kubernetes-version $KUBE_RELEASE --control-plane-endpoint "$LB_IP:6443" --upload-certs --ignore-preflight-errors=all
+  kubeadm init --token=$TOKEN --pod-network-cidr=10.244.0.0/16 --kubernetes-version $KUBE_RELEASE --control-plane-endpoint "$LB_IP:6443" --upload-certs --ignore-preflight-errors=all | grep -Ei "kubeadm join|discovery-token-ca-cert-hash" 2>&1 | tee kubeadm-output.txt
   sleep 30
   mkdir $HOME/.kube
   cp /etc/kubernetes/admin.conf $HOME/.kube/config
@@ -841,7 +844,6 @@ function deploy_control1 () {
   export KUBECONFIG=$HOME/.kube/config
   echo "export KUBECONFIG=$HOME/.kube/config" >> $HOME/.bash_profile
   echo "alias oc=/usr/bin/kubectl" >> /root/.bash_profile
-  ln -s /etc/rancher/rke2/rke2.yaml ~/.kube/config  
   chmod 600 $HOME/.kube/config
   cp $HOME/.kube/config /home/k8s-aws/
  
@@ -854,8 +856,9 @@ function deploy_control1 () {
   
   echo - unpack helm
   mkdir /mnt/test
-  mount $BUILD_SERVER_IP:/opt/rancher /mnt/test
-  cp /mnt/test/helm/helm-v3.13.2-linux-amd64.tar.gz .
+  mount $BUILD_SERVER_IP:/opt/k8s /mnt/test
+  #cp /mnt/test/helm/helm-v3.13.2-linux-amd64.tar.gz .
+  cd /opt/k8s/k8s_"$KUBE_RELEASE"
   tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
   mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
 
@@ -868,9 +871,27 @@ function deploy_control23 () {
   # this is for the 2nd & 3rd Master node
 
   base
+  
+  echo - unpack helm
+  mkdir /mnt/test
+  mount $BUILD_SERVER_IP:/opt/k8s /mnt/test
+  #cp /mnt/test/helm/helm-v3.13.2-linux-amd64.tar.gz .
+  cd /opt/k8s/k8s_"$KUBE_RELEASE"
+  tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
+  mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
 
-  # Setting up Kubernetes Master 2 & 3 using Kubeadm
-  kubeadm join $LB_IP:8443 --token $TOKEN --discovery-token-unsafe-skip-ca-verification --control-plane --kubernetes-version $KUBE_RELEASE --ignore-preflight-errors=all
+  echo - Setting up Kubernetes Master 2 and 3 using Kubeadm
+  exit
+  #kubeadm join $LB_IP:6443 --token $TOKEN --discovery-token-unsafe-skip-ca-verification --control-plane --ignore-preflight-errors=all
+  sleep 40
+  mkdir $HOME/.kube
+  cp /etc/kubernetes/admin.conf $HOME/.kube/config
+  chown $(id -u):$(id -g) $HOME/.kube/config
+  export KUBECONFIG=$HOME/.kube/config
+  echo "export KUBECONFIG=$HOME/.kube/config" >> $HOME/.bash_profile
+  echo "alias oc=/usr/bin/kubectl" >> /root/.bash_profile
+  chmod 600 $HOME/.kube/config
+  cp $HOME/.kube/config /home/k8s-aws/
 
   echo "------------------------------------------------------------------"
 
@@ -883,7 +904,7 @@ function deploy_worker () {
   base
 
   # Setting up Kubernetes Worker using Kubeadm
-  kubeadm join $LB_IP:6443 --token=$TOKEN --discovery-token-unsafe-skip-ca-verification --kubernetes-version $KUBE_RELEASE --ignore-preflight-errors=all
+  kubeadm join $LB_IP:6443 --token=$TOKEN --discovery-token-unsafe-skip-ca-verification --ignore-preflight-errors=all
 
   echo "------------------------------------------------------------------"
 
