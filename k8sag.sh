@@ -630,6 +630,10 @@ EOF
 
   echo - Setup nfs
   # share out opt directory
+  mkdir /mnt/common
+  chown nobody:nogroup /mnt/common
+  chmod 777 /mnt/common
+  echo "/mnt/common *(rw)" >> /etc/exports
   echo "/opt/k8s *(ro)" >> /etc/exports
   echo "/root/ubuntu-repo *(ro)" >> /etc/exports
   systemctl enable nfs-server.service && systemctl start nfs-server.service
@@ -833,10 +837,12 @@ function deploy_control1 () {
   base
 
   # Setting up Kubernetes Master using Kubeadm
-
   sleep 10
+  mkdir /mnt/join
+  mount $BUILD_SERVER_IP:/mnt/common /mnt/join
   #kubeadm init --token=$TOKEN --pod-network-cidr=10.244.0.0/16 --kubernetes-version $KUBE_RELEASE --control-plane-endpoint "$LB_IP:6443" --upload-certs --ignore-preflight-errors=all
-  kubeadm init --token=$TOKEN --pod-network-cidr=10.244.0.0/16 --kubernetes-version $KUBE_RELEASE --control-plane-endpoint "$LB_IP:6443" --upload-certs --ignore-preflight-errors=all | grep -Ei "kubeadm join|discovery-token-ca-cert-hash" 2>&1 | tee kubeadm-output.txt
+  kubeadm init --token=$TOKEN --pod-network-cidr=10.244.0.0/16 --kubernetes-version $KUBE_RELEASE --control-plane-endpoint "$LB_IP:6443" --upload-certs --ignore-preflight-errors=all | grep -Ei "kubeadm join|discovery-token-ca-cert-hash|certificate-key" 2>&1 | tee kubeadm-output.txt
+  cp kubeadm-output.txt /mnt/join/
   sleep 30
   mkdir $HOME/.kube
   cp /etc/kubernetes/admin.conf $HOME/.kube/config
@@ -872,7 +878,16 @@ function deploy_control23 () {
   # this is for the 2nd & 3rd Master node
 
   base
-  
+
+  echo - Setting up Kubernetes Master2 and Master3 using Kubeadm
+  sleep 10
+  mkdir /mnt/join
+  mount $BUILD_SERVER_IP:/mnt/common /mnt/join
+  CERTKEY=$(more /mnt/join/kubeadm-output.txt | grep certificate-key | sed -n 's/--control-plane --certificate-key//p')
+  HASHKEY=$(more /mnt/join/kubeadm-output.txt | grep discovery-token-ca-cert-hash | sed -n 's/--discovery-token-ca-cert-hash//p')
+  kubeadm join $LB_IP:6443 --token $TOKEN --discovery-token-ca-cert-hash $HASHKEY --control-plane --certificate-key $CERTKEY --ignore-preflight-errors=all
+  sleep 40
+
   echo - unpack helm
   mkdir /mnt/test
   mount $BUILD_SERVER_IP:/opt/k8s /mnt/test
@@ -880,11 +895,7 @@ function deploy_control23 () {
   cd /opt/k8s/k8s_"$KUBE_RELEASE"
   tar -zxvf helm-v3.13.2-linux-amd64.tar.gz > /dev/null 2>&1
   mv linux-amd64/helm /usr/local/bin/ > /dev/null 2>&1
-
-  echo - Setting up Kubernetes Master 2 and 3 using Kubeadm
-  exit
-  #kubeadm join $LB_IP:6443 --token $TOKEN --discovery-token-unsafe-skip-ca-verification --control-plane --ignore-preflight-errors=all
-  sleep 40
+  
   mkdir $HOME/.kube
   cp /etc/kubernetes/admin.conf $HOME/.kube/config
   chown $(id -u):$(id -g) $HOME/.kube/config
@@ -905,8 +916,14 @@ function deploy_worker () {
 
   base
 
-  # Setting up Kubernetes Worker using Kubeadm
-  kubeadm join $LB_IP:6443 --token=$TOKEN --discovery-token-unsafe-skip-ca-verification --ignore-preflight-errors=all
+  echo - Setting up Kubernetes Worker using Kubeadm
+  sleep 10
+  mkdir /mnt/join
+  mount $BUILD_SERVER_IP:/mnt/common /mnt/join
+  HASHKEY=$(more /mnt/join/kubeadm-output.txt | grep discovery-token-ca-cert-hash | sed -n 's/--discovery-token-ca-cert-hash//p')
+  kubeadm join $LB_IP:6443 --token $TOKEN --discovery-token-ca-cert-hash $HASHKEY --ignore-preflight-errors=all
+  sleep 20
+  #kubeadm join $LB_IP:6443 --token=$TOKEN --discovery-token-unsafe-skip-ca-verification --ignore-preflight-errors=all
 
   echo "------------------------------------------------------------------"
 
@@ -914,12 +931,14 @@ function deploy_worker () {
 
 ################## Cluster login from Build Server #####################
 function kubelogin () {
- echo - Kubernetes login setup
- #scp -i <PEM file location> <USER>@<MASTER1>:/etc/rancher/rke2/rke2.yaml .
- cp rke2.yaml kubeconfig
- sed -i "s/127.0.0.1/$LB_IP/g" kubeconfig
- export KUBECONFIG=./kubeconfig
- kubectl get no
+  echo - Kubernetes login setup
+  #scp -i <PEM file location> <USER>@<MASTER1>:/home/k8s-aws/config .
+  mkdir $HOME/.kube
+  cp config $HOME/.kube/config
+  chown $(id -u):$(id -g) $HOME/.kube/config
+  export KUBECONFIG=$HOME/.kube/config
+  echo "export KUBECONFIG=$HOME/.kube/config" >> $HOME/.bash_profile
+  echo "alias oc=/usr/bin/kubectl" >> /root/.bash_profile
 
 }
 
