@@ -314,8 +314,13 @@ function imageload () {
   if ! command -v docker &> /dev/null;
   then
     echo "Trying to Install Docker..."
-    curl -s https://releases.rancher.com/install-docker/19.03.sh | sh
-    systemctl start docker; systemctl enable docker
+    if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+      apt update -y && apt install docker.io -y
+      systemctl start docker; systemctl enable docker
+    else
+      curl -s https://releases.rancher.com/install-docker/19.03.sh | sh
+      systemctl start docker; systemctl enable docker
+    fi
   fi 
   systemctl restart docker
 
@@ -500,11 +505,15 @@ function build () {
   if ! command -v docker &> /dev/null;
   then
     echo "Trying to Install Docker..."
-    #dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
-    #dnf install docker-ce --nobest --allowerasing -y
-    curl -s https://releases.rancher.com/install-docker/19.03.sh | sh
+    if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+      apt update -y && apt install docker.io -y
+      systemctl start docker; systemctl enable docker
+    else
+      curl -s https://releases.rancher.com/install-docker/19.03.sh | sh
+      systemctl start docker; systemctl enable docker
+    fi
   fi 
-  systemctl start docker; systemctl enable docker
+  systemctl restart docker
 
   if ! command -v crane &> /dev/null;
   then
