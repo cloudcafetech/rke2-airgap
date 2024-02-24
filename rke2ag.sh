@@ -85,12 +85,18 @@ openssl req -new -x509 -nodes -sha1 -days 365 -key domain.key -out domain.crt -c
 websetup() {
 
 echo - Apache Web Server
-yum install -y httpd
-sed -i 's/Listen 80/Listen 0.0.0.0:8080/' /etc/httpd/conf/httpd.conf
-setsebool -P httpd_read_user_content 1
-systemctl start httpd;systemctl enable httpd
-#firewall-cmd --add-port=8080/tcp --permanent
-#firewall-cmd --reload
+if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+ apt install apache2 -y
+ sed -i 's/Listen 80/Listen 0.0.0.0:8080/' /etc/apache2/ports.conf
+ sed -i 's/80/8080/' /etc/apache2/sites-enabled/000-default.conf
+ systemctl start apache2;systemctl enable apache2
+ systemctl restart apache2
+else
+ yum install -y httpd
+ sed -i 's/Listen 80/Listen 0.0.0.0:8080/' /etc/httpd/conf/httpd.conf
+ setsebool -P httpd_read_user_content 1
+ systemctl start httpd;systemctl enable httpd
+fi
 
 # Download mount CentOS 8 ISO for CentOS
 if [ ! -d /mnt/iso ]; then
@@ -224,26 +230,26 @@ listen stats
 
 # RKE2 Supervisor Server
 frontend rke2_supervisor_frontend
-    bind :9345
+    bind *:9345
     default_backend rke2_supervisor_backend
     mode tcp
 
 backend rke2_supervisor_backend
     mode tcp
-    balance source
+    balance roundrobin
     server      $MASTERDNS1 $MASTERIP1:9345 check
     server      $MASTERDNS2 $MASTERIP2:9345 check
     server      $MASTERDNS3 $MASTERIP3:9345 check
 
 # RKE2 Kube API Server
 frontend rke2_api_frontend
-    bind :6443
+    bind *:6443
     default_backend rke2_api_backend
     mode tcp
 
 backend rke2_api_backend
     mode tcp
-    balance source
+    balance roundrobin
     server      $MASTERDNS1 $MASTERIP1:6443 check
     server      $MASTERDNS2 $MASTERIP2:6443 check
     server      $MASTERDNS3 $MASTERIP3:6443 check
@@ -252,11 +258,11 @@ backend rke2_api_backend
 frontend rke2_http_ingress_frontend
     bind :80
     default_backend rke2_http_ingress_backend
-    mode tcp
+    mode http
 
 backend rke2_http_ingress_backend
-    balance source
-    mode tcp
+    balance roundrobin
+    mode http
     server      $MASTERDNS1 $MASTERIP1:80 check
     server      $MASTERDNS2 $MASTERIP2:80 check
     server      $MASTERDNS3 $MASTERIP3:80 check
@@ -268,7 +274,7 @@ frontend rke2_https_ingress_frontend
 
 backend rke2_https_ingress_backend
     mode tcp
-    balance source
+    balance roundrobin
     server      $MASTERDNS1 $MASTERIP1:443 check
     server      $MASTERDNS2 $MASTERIP2:443 check
     server      $MASTERDNS3 $MASTERIP3:443 check
