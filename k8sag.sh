@@ -113,12 +113,19 @@ openssl req -new -x509 -nodes -sha1 -days 365 -key domain.key -out domain.crt -c
 websetup() {
 
 echo - Apache Web Server
-yum install -y httpd
-sed -i 's/Listen 80/Listen 0.0.0.0:8080/' /etc/httpd/conf/httpd.conf
-setsebool -P httpd_read_user_content 1
-systemctl start httpd;systemctl enable httpd
-#firewall-cmd --add-port=8080/tcp --permanent
-#firewall-cmd --reload
+
+if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+ apt install apache2 -y
+ sed -i 's/Listen 80/Listen 0.0.0.0:8080/' /etc/apache2/ports.conf
+ sed -i 's/80/8080/' /etc/apache2/sites-enabled/000-default.conf
+ systemctl start apache2;systemctl enable apache2
+ systemctl restart apache2
+else
+ yum install -y httpd
+ sed -i 's/Listen 80/Listen 0.0.0.0:8080/' /etc/httpd/conf/httpd.conf
+ setsebool -P httpd_read_user_content 1
+ systemctl start httpd;systemctl enable httpd
+fi 
 
 # Mount CentOS 8 ISO for CentOS
 if [ ! -d /mnt/iso ]; then
