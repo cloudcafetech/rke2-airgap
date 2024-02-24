@@ -272,11 +272,23 @@ backend k8s_https_ingress_backend
     server      $MASTERDNS3 $MASTERIP3:443 check
 EOF
 
+
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
    systemctl start haproxy;systemctl enable haproxy
   else
+
+cat <<EOF > /etc/rsyslog.d/99-haproxy.conf
+$AddUnixListenSocket /var/lib/haproxy/dev/log
+
+# Send HAProxy messages to a dedicated logfile
+:programname, startswith, "haproxy" {
+  /var/log/haproxy.log
+  stop
+}
+EOF
+   mkdir /var/lib/haproxy/dev
    setsebool -P haproxy_connect_any 1
-   systemctl start haproxy;systemctl enable haproxy
+   systemctl start haproxy;systemctl enable haproxy; systemctl restart rsyslog
    firewall-cmd --add-port=6443/tcp --permanent
    firewall-cmd --add-port=443/tcp --permanent
    firewall-cmd --add-service=http --permanent
