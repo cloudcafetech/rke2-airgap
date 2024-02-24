@@ -414,6 +414,8 @@ function imageload () {
   crane --insecure copy prom/alertmanager:v0.16.2 $BUILD_SERVER_IP:5000/prometheus/alertmanager:v0.16.0
   crane --insecure copy flannel/flannel:v0.24.2 $BUILD_SERVER_IP:5000/flannel/flannel:v0.24.2
   crane --insecure copy flannel/flannel-cni-plugin:v1.4.0-flannel1 $BUILD_SERVER_IP:5000/flannel/flannel-cni-plugin:v1.4.0-flannel1
+  crane --insecure copy registry.k8s.io/ingress-nginx/controller:v1.8.1@sha256:e5c4824e7375fcf2a393e1c03c293b69759af37a9ca6abdb91b13d78a93da8bd $BUILD_SERVER_IP:5000/ingress-nginx/controller:v1.8.1@sha256:e5c4824e7375fcf2a393e1c03c293b69759af37a9ca6abdb91b13d78a93da8bd
+  crane --insecure copy registry.k8s.io/ingress-nginx/kube-webhook-certgen:v20230407@sha256:543c40fd093964bc9ab509d3e791f9989963021f1e9e4c9c7b6700b02bfb227b $BUILD_SERVER_IP:5000/ingress-nginx/kube-webhook-certgen:v20230407@sha256:543c40fd093964bc9ab509d3e791f9989963021f1e9e4c9c7b6700b02bfb227b
 
   echo - Load images for Longhorn
   for i in $(cat /opt/k8s/images/longhorn/longhorn-images.txt); do
@@ -570,11 +572,13 @@ EOF
   wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/kubelog.yaml
   wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/loki.yaml
   wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/promtail.yaml
+  wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ingress-controller.yaml
   sed -i "s/34.125.24.130/$BUILD_SERVER_PUBIP/g" kubemon.yaml
   sed -i -e "s/quay.io/$BUILD_SERVER_IP:5000/g" -e "s/k8s.gcr.io/$BUILD_SERVER_IP:5000/g" kubemon.yaml
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kubemon.yaml
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kubelog.yaml
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" promtail.yaml
+  sed -i -e "s/registry.k8s.io/$BUILD_SERVER_IP:5000/g" ingress-controller.yaml
 
   echo - Get Certmanager yaml
   wget -q https://github.com/cert-manager/cert-manager/releases/download/$CERT_VERSION/cert-manager.yaml 
@@ -631,7 +635,7 @@ EOF
   echo - Setup nfs
   # share out opt directory
   mkdir /mnt/common
-  chown nobody:nogroup /mnt/common
+  chown nobody:nobody /mnt/common
   chmod 777 /mnt/common
   echo "/mnt/common *(rw)" >> /etc/exports
   echo "/opt/k8s *(ro)" >> /etc/exports
@@ -884,7 +888,7 @@ function deploy_control23 () {
   mkdir /mnt/join
   mount $BUILD_SERVER_IP:/mnt/common /mnt/join
   CERTKEY=$(more /mnt/join/kubeadm-output.txt | grep certificate-key | sed -n 's/--control-plane --certificate-key//p')
-  HASHKEY=$(more /mnt/join/kubeadm-output.txt | grep discovery-token-ca-cert-hash | sed -n 's/--discovery-token-ca-cert-hash//p')
+  HASHKEY=$(more /mnt/join/kubeadm-output.txt | grep discovery-token-ca-cert-hash | tail -1 | sed -n 's/--discovery-token-ca-cert-hash//p')
   kubeadm join $LB_IP:6443 --token $TOKEN --discovery-token-ca-cert-hash $HASHKEY --control-plane --certificate-key $CERTKEY --ignore-preflight-errors=all
   sleep 40
 
@@ -920,7 +924,7 @@ function deploy_worker () {
   sleep 10
   mkdir /mnt/join
   mount $BUILD_SERVER_IP:/mnt/common /mnt/join
-  HASHKEY=$(more /mnt/join/kubeadm-output.txt | grep discovery-token-ca-cert-hash | sed -n 's/--discovery-token-ca-cert-hash//p')
+  HASHKEY=$(more /mnt/join/kubeadm-output.txt | grep discovery-token-ca-cert-hash | tail -1 | sed -n 's/--discovery-token-ca-cert-hash//p')
   kubeadm join $LB_IP:6443 --token $TOKEN --discovery-token-ca-cert-hash $HASHKEY --ignore-preflight-errors=all
   sleep 20
   #kubeadm join $LB_IP:6443 --token=$TOKEN --discovery-token-unsafe-skip-ca-verification --ignore-preflight-errors=all
@@ -938,7 +942,7 @@ function kubelogin () {
   chown $(id -u):$(id -g) $HOME/.kube/config
   export KUBECONFIG=$HOME/.kube/config
   echo "export KUBECONFIG=$HOME/.kube/config" >> $HOME/.bash_profile
-  echo "alias oc=/usr/bin/kubectl" >> /root/.bash_profile
+  echo "alias oc=/usr/local/bin/kubectl" >> /root/.bash_profile
 
 }
 
@@ -946,8 +950,8 @@ function kubelogin () {
 function flask () {
   # dummy 3 tier app - asked for by a customer. 
   echo - load images
-  for file in $(ls /opt/rancher/images/flask/ | grep -v yaml ); do 
-     skopeo copy docker-archive:/opt/rancher/images/flask/"$file" docker://"$(echo "$file" | sed 's/.tar//g' | awk '{print "$BUILD_SERVER_IP:5000/flask/"$1}')" --dest-tls-verify=false
+  for file in $(ls /opt/k8s/images/flask/ | grep -v yaml ); do 
+     skopeo copy docker-archive:/opt/k8s/images/flask/"$file" docker://"$(echo "$file" | sed 's/.tar//g' | awk '{print "$BUILD_SERVER_IP:5000/flask/"$1}')" --dest-tls-verify=false
   done
 
   echo "------------------------------------------------------------------"
@@ -961,15 +965,32 @@ function flask () {
 ############################# Cert Manager ################################
 function certman () {
   # deploy Cert Manager with private registry images
-  cd /opt/rancher/images/others/
+  cd /opt/k8s/images/others/
   echo - Cert Manager Setup
   kubectl create -f cert-manager.yaml
+}
+
+####################### Nginx Ingress Controller ###########################
+function ingcon () {
+  # Deploy Nginx Ingress Controller
+  cd /opt/k8s/images/others/
+  echo - Deploy Nginx Ingress Controller
+  kubectl taint node $MASTERDNS1 node-role.kubernetes.io/control-plane:NoSchedule-
+  kubectl taint node $MASTERDNS2 node-role.kubernetes.io/control-plane:NoSchedule-
+  kubectl taint node $MASTERDNS3 node-role.kubernetes.io/control-plane:NoSchedule-
+
+  kubectl label nodes $MASTERDNS1 zone=master
+  kubectl label nodes $MASTERDNS2 zone=master
+  kubectl label nodes $MASTERDNS1 zone=master
+
+  kubectl create -f ingress-controller.yaml
+  kubectl scale deployment.apps/ingress-nginx-controller -n ingress-nginx --replicas=3
 }
 
 ###################### Monitoring And Logging #############################
 function monlog () {
   # deploy Monitoring & Logging with private registry images
-  cd /opt/rancher/images/others/
+  cd /opt/k8s/images/others/
   echo - Kubernetes Monitoring Setup
   kubectl create ns monitoring
   kubectl create configmap grafana-dashboards -n monitoring --from-file=pod-monitoring.json --from-file=kube-monitoring-overview.json
@@ -987,23 +1008,23 @@ function monlog () {
 function longhorn () {
   # deploy longhorn with private registry images
   echo - deploying longhorn
-  helm upgrade -i longhorn /opt/rancher/helm/longhorn-$LONGHORN_VERSION.tgz --namespace longhorn-system --create-namespace --set ingress.enabled=true --set ingress.host=longhorn.$DOMAIN --set global.cattle.systemDefaultRegistry=$BUILD_SERVER_IP:5000
+  helm upgrade -i longhorn /opt/k8s/helm/longhorn-$LONGHORN_VERSION.tgz --namespace longhorn-system --create-namespace --set ingress.enabled=true --set ingress.host=longhorn.$DOMAIN --set global.cattle.systemDefaultRegistry=$BUILD_SERVER_IP:5000
 }
 
 ################################# neuvector ################################
 function neuvector () {
   # deploy neuvector with private registry images
   echo - deploying neuvector
-  helm upgrade -i neuvector --namespace neuvector /opt/rancher/helm/core-$NEU_VERSION.tgz --create-namespace  --set imagePullSecrets=regsecret --set k3s.enabled=true --set k3s.runtimePath=/run/k3s/containerd/containerd.sock  --set manager.ingress.enabled=true --set controller.pvc.enabled=true --set manager.svc.type=ClusterIP --set controller.pvc.capacity=500Mi --set registry=$BUILD_SERVER_IP:5000 --set controller.image.repository=neuvector/controller --set enforcer.image.repository=neuvector/enforcer --set manager.image.repository=neuvector/manager --set cve.updater.image.repository=neuvector/updater --set manager.ingress.host=neuvector.$DOMAIN --set internal.certmanager.enabled=true
+  helm upgrade -i neuvector --namespace neuvector /opt/k8s/helm/core-$NEU_VERSION.tgz --create-namespace  --set imagePullSecrets=regsecret --set k3s.enabled=true --set k3s.runtimePath=/run/k3s/containerd/containerd.sock  --set manager.ingress.enabled=true --set controller.pvc.enabled=true --set manager.svc.type=ClusterIP --set controller.pvc.capacity=500Mi --set registry=$BUILD_SERVER_IP:5000 --set controller.image.repository=neuvector/controller --set enforcer.image.repository=neuvector/enforcer --set manager.image.repository=neuvector/manager --set cve.updater.image.repository=neuvector/updater --set manager.ingress.host=neuvector.$DOMAIN --set internal.certmanager.enabled=true
 }
 
 ################################# rancher ################################
 function rancher () {
   # deploy rancher with local helm/images
   echo - deploying rancher
-  helm upgrade -i cert-manager /opt/rancher/helm/cert-manager-$CERT_VERSION.tgz --namespace cert-manager --create-namespace --set installCRDs=true --set image.repository=$BUILD_SERVER_IP:5000/cert/cert-manager-controller --set webhook.image.repository=$BUILD_SERVER_IP:5000/cert/cert-manager-webhook --set cainjector.image.repository=$BUILD_SERVER_IP:5000/cert/cert-manager-cainjector --set startupapicheck.image.repository=$BUILD_SERVER_IP:5000/cert/cert-manager-ctl 
+  helm upgrade -i cert-manager /opt/k8s/helm/cert-manager-$CERT_VERSION.tgz --namespace cert-manager --create-namespace --set installCRDs=true --set image.repository=$BUILD_SERVER_IP:5000/cert/cert-manager-controller --set webhook.image.repository=$BUILD_SERVER_IP:5000/cert/cert-manager-webhook --set cainjector.image.repository=$BUILD_SERVER_IP:5000/cert/cert-manager-cainjector --set startupapicheck.image.repository=$BUILD_SERVER_IP:5000/cert/cert-manager-ctl 
 
-  helm upgrade -i rancher /opt/rancher/helm/rancher-$RANCHER_VERSION.tgz --namespace cattle-system --create-namespace --set bootstrapPassword=bootStrapAllTheThings --set replicas=1 --set auditLog.level=2 --set auditLog.destination=hostPath --set useBundledSystemChart=true --set rancherImage=$BUILD_SERVER_IP:5000/rancher/rancher --set systemDefaultRegistry=$BUILD_SERVER_IP:5000 --set hostname=rancher.$DOMAIN
+  helm upgrade -i rancher /opt/k8s/helm/rancher-$RANCHER_VERSION.tgz --namespace cattle-system --create-namespace --set bootstrapPassword=bootStrapAllTheThings --set replicas=1 --set auditLog.level=2 --set auditLog.destination=hostPath --set useBundledSystemChart=true --set rancherImage=$BUILD_SERVER_IP:5000/rancher/rancher --set systemDefaultRegistry=$BUILD_SERVER_IP:5000 --set hostname=rancher.$DOMAIN
 
   echo "   - bootstrap password = \"bootStrapAllTheThings\" "
 }
@@ -1032,6 +1053,7 @@ function usage () {
   echo " $0 worker # Deploy Worker"
   echo " $0 flask # deploy a 3 tier app"
   echo " $0 certman # deploy certmanager"
+  echo " $0 ingcon # deploy ingress controller"
   echo " $0 monlog # deploy monitoring & logging"
   echo " $0 neuvector # deploy neuvector"
   echo " $0 longhorn # deploy longhorn"
@@ -1051,6 +1073,7 @@ case "$1" in
         worker) deploy_worker;;
         kubelogin) kubelogin;;
         certman) certman;;
+        ingcon) ingcon;;
         monlog) monlog;;
         neuvector) neuvector;;
         longhorn) longhorn;;
