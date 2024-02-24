@@ -242,13 +242,13 @@ listen stats
 
 # Kube API Server
 frontend k8s_api_frontend
-    bind :6443
+    bind *:6443
     default_backend k8s_api_backend
     mode tcp
 
 backend k8s_api_backend
     mode tcp
-    balance source
+    balance roundrobin
     server      $MASTERDNS1 $MASTERIP1:6443 check
     server      $MASTERDNS2 $MASTERIP2:6443 check
     server      $MASTERDNS3 $MASTERIP3:6443 check
@@ -257,11 +257,11 @@ backend k8s_api_backend
 frontend k8s_http_ingress_frontend
     bind :80
     default_backend k8s_http_ingress_backend
-    mode tcp
+    mode http
 
 backend k8s_http_ingress_backend
-    balance source
-    mode tcp
+    mode http
+    balance roundrobin
     server      $MASTERDNS1 $MASTERIP1:80 check
     server      $MASTERDNS2 $MASTERIP2:80 check
     server      $MASTERDNS3 $MASTERIP3:80 check
@@ -273,7 +273,7 @@ frontend k8s_https_ingress_frontend
 
 backend k8s_https_ingress_backend
     mode tcp
-    balance source
+    balance roundrobin
     server      $MASTERDNS1 $MASTERIP1:443 check
     server      $MASTERDNS2 $MASTERIP2:443 check
     server      $MASTERDNS3 $MASTERIP3:443 check
