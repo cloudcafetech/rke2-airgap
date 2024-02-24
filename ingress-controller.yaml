@@ -416,7 +416,7 @@ spec:
         app.kubernetes.io/version: 1.8.1
     spec:
       nodeSelector:
-        zone=master
+        zone: master
       hostNetwork: true
       containers:
       - args:
