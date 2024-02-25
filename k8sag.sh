@@ -285,6 +285,11 @@ EOF
 
   if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
    systemctl start haproxy;systemctl enable haproxy
+   echo - Stopping and disabling firewall 
+   systemctl stop ufw
+   systemctl stop apparmor.service
+   systemctl disable --now ufw
+   systemctl disable --now apparmor.service 
   else
 
 cat <<EOF > /etc/rsyslog.d/99-haproxy.conf
