@@ -805,12 +805,10 @@ EOF
      sed -i -e 's\            SystemdCgroup = false\            SystemdCgroup = true\g' /etc/containerd/config.toml
      sed -i 's|    sandbox_image = "registry.k8s.io/pause:3.5"|    sandbox_image = "registry.k8s.io/pause:3.9"|g' /etc/containerd/config.toml
      sed -i 's/^disabled_plugins = \["cri"\]/#&/' /etc/containerd/config.toml
-     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.configs/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".tls/' /etc/containerd/config.tom
-l
+     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.configs/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".tls/' /etc/containerd/config.toml
      sed -i '/registry.configs/a insecure_skip_verify = true' /etc/containerd/config.toml
      sed -i 's/insecure_skip_verify/         insecure_skip_verify/' /etc/containerd/config.toml
-     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.auths/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".auth/' /etc/containerd/config.toml
- 
+     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.auths/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".auth/' /etc/containerd/config.toml 
      sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.mirrors/plugins."io.containerd.grpc.v1.cri".registry.mirrors."RSERVERIP:5000"/' /etc/containerd/config.toml
      sed -i '/auth/a username = "admin"' /etc/containerd/config.toml
      sed -i '/username/a password = "admin@2675"' /etc/containerd/config.toml 
@@ -890,12 +888,10 @@ EOF
      sed -i -e 's\            SystemdCgroup = false\            SystemdCgroup = true\g' /etc/containerd/config.toml
      sed -i 's|    sandbox_image = "registry.k8s.io/pause:3.6"|    sandbox_image = "registry.k8s.io/pause:3.9"|g' /etc/containerd/config.toml
      sed -i 's/^disabled_plugins = \["cri"\]/#&/' /etc/containerd/config.toml
-     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.configs/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".tls/' /etc/containerd/config.tom
-l
+     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.configs/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".tls/' /etc/containerd/config.toml
      sed -i '/registry.configs/a insecure_skip_verify = true' /etc/containerd/config.toml
      sed -i 's/insecure_skip_verify/         insecure_skip_verify/' /etc/containerd/config.toml
      sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.auths/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".auth/' /etc/containerd/config.toml
- 
      sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.mirrors/plugins."io.containerd.grpc.v1.cri".registry.mirrors."RSERVERIP:5000"/' /etc/containerd/config.toml
      sed -i '/auth/a username = "admin"' /etc/containerd/config.toml
      sed -i '/username/a password = "admin@2675"' /etc/containerd/config.toml 
