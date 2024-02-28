@@ -318,6 +318,11 @@ EOF
 ################################# Image Upload ################################
 function imageload () {
 
+  if [[ -z "$BUILD_SERVER_IP" ]]; then 
+   echo - Please enter Build Server IP in variable
+   exit
+  fi
+
   echo - "Check & Install docker, crane & setup docker Private Registry"
   if ! command -v docker &> /dev/null;
   then
@@ -491,6 +496,11 @@ function imageload () {
 
 ################################# build ################################
 function build () {
+
+  if [[ -z "$BUILD_SERVER_IP" ]]; then 
+   echo - Please enter Build Server IP in variable
+   exit
+  fi
   
   echo - skopeo
   if ! command -v docker &> /dev/null;
@@ -656,20 +666,18 @@ EOF
   if [ ! -f /root/ubuntu-repo/pkg/kubectl*.deb ]; then
     chcon system_u:object_r:container_file_t:s0 /root/ubuntu-repo/pkg
     cd /root/ubuntu-repo/pkg
-    if [[ "$K8SCNI" == "CRIO" ]]; then
-      curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ubuntu-kubeadm-crio-pkg.sh
-      mv ubuntu-kubeadm-crio-pkg.sh ubuntu-kubeadm-pkg.sh
-    else
-      curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ubuntu-kubeadm-containerd-pkg.sh
-      mv ubuntu-kubeadm-containerd-pkg.sh ubuntu-kubeadm-pkg.sh
-    fi
+    curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ubuntu-kubeadm-pkg.sh
     chmod 755 ubuntu-kubeadm-pkg.sh
     docker rm ubuntu
     docker run --name ubuntu -it -e K8S=$K8S_VER_MJ -v /root/ubuntu-repo/pkg:/host ubuntu:20.04 bash -c "$(cat ./ubuntu-kubeadm-pkg.sh)"
     sleep 10
     docker rm ubuntu
-    tar -cvzf kube-pkg.tar.gz *.deb
-    cp kube-pkg.tar.gz /root/ubuntu-repo/
+    cd crio
+    tar -cvzf kube-crio-pkg.tar.gz *.deb
+    cp kube-crio-pkg.tar.gz /root/ubuntu-repo/
+    cd ../cond
+    tar -cvzf kube-cond-pkg.tar.gz *.deb
+    cp kube-cond-pkg.tar.gz /root/ubuntu-repo/
   fi 
 
   echo - Setup nfs
@@ -757,16 +765,16 @@ EOF
    curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/nfs_offline_install.sh && chmod 755 nfs_offline_install.sh
    ./nfs_offline_install.sh
    sleep 10 
-   cd /opt/k8s/k8s_"$KUBE_RELEASE"/pkg
-   curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/kube-pkg.tar.gz
-   curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/registries.conf
-   cp /opt/k8s/k8s_"$KUBE_RELEASE"/kube-pkg.tar.gz .
-   tar -zxvf kube-pkg.tar.gz
-   rm -rf openssl* 
-   dpkg -i *.deb
-   sleep 5
-   apt-mark hold kubelet kubeadm kubectl
    if [[ "$K8SCNI" == "CRIO" ]]; then
+     cd /opt/k8s/k8s_"$KUBE_RELEASE"/pkg
+     curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/kube-crio-pkg.tar.gz
+     curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/registries.conf
+     cp /opt/k8s/k8s_"$KUBE_RELEASE"/kube-crio-pkg.tar.gz .
+     tar -zxvf kube-crio-pkg.tar.gz
+     rm -rf openssl* 
+     dpkg -i *.deb
+     sleep 5
+     apt-mark hold kubelet kubeadm kubectl
      sed -i 's|# cgroup_manager = "systemd"|  cgroup_manager = "systemd"|g' /etc/crio/crio.conf
      sed -i 's|# pause_image = "registry.k8s.io/pause:3.6"|  pause_image = "registry.k8s.io/pause:3.9"|g' /etc/crio/crio.conf
 
@@ -783,16 +791,26 @@ EOF
      echo - Private registry login
      podman login -u admin -p admin@2675 $BUILD_SERVER_IP:5000
    else
+     cd /opt/k8s/k8s_"$KUBE_RELEASE"/pkg
+     curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/kube-cond-pkg.tar.gz
+     cp /opt/k8s/k8s_"$KUBE_RELEASE"/kube-cond-pkg.tar.gz .
+     tar -zxvf kube-cond-pkg.tar.gz
+     rm -rf openssl* 
+     dpkg -i *.deb
+     sleep 5
+     apt-mark hold kubelet kubeadm kubectl
      rm -rf /etc/containerd/config.toml 
      mkdir -p /etc/containerd
      containerd config default > /etc/containerd/config.toml 
      sed -i -e 's\            SystemdCgroup = false\            SystemdCgroup = true\g' /etc/containerd/config.toml
      sed -i 's|    sandbox_image = "registry.k8s.io/pause:3.5"|    sandbox_image = "registry.k8s.io/pause:3.9"|g' /etc/containerd/config.toml
      sed -i 's/^disabled_plugins = \["cri"\]/#&/' /etc/containerd/config.toml
-     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.configs/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".tls/' /etc/containerd/config.toml
+     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.configs/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".tls/' /etc/containerd/config.tom
+l
      sed -i '/registry.configs/a insecure_skip_verify = true' /etc/containerd/config.toml
      sed -i 's/insecure_skip_verify/         insecure_skip_verify/' /etc/containerd/config.toml
-     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.auths/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".auth/' /etc/containerd/config.toml 
+     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.auths/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".auth/' /etc/containerd/config.toml
+ 
      sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.mirrors/plugins."io.containerd.grpc.v1.cri".registry.mirrors."RSERVERIP:5000"/' /etc/containerd/config.toml
      sed -i '/auth/a username = "admin"' /etc/containerd/config.toml
      sed -i '/username/a password = "admin@2675"' /etc/containerd/config.toml 
@@ -872,10 +890,12 @@ EOF
      sed -i -e 's\            SystemdCgroup = false\            SystemdCgroup = true\g' /etc/containerd/config.toml
      sed -i 's|    sandbox_image = "registry.k8s.io/pause:3.6"|    sandbox_image = "registry.k8s.io/pause:3.9"|g' /etc/containerd/config.toml
      sed -i 's/^disabled_plugins = \["cri"\]/#&/' /etc/containerd/config.toml
-     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.configs/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".tls/' /etc/containerd/config.toml
+     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.configs/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".tls/' /etc/containerd/config.tom
+l
      sed -i '/registry.configs/a insecure_skip_verify = true' /etc/containerd/config.toml
      sed -i 's/insecure_skip_verify/         insecure_skip_verify/' /etc/containerd/config.toml
-     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.auths/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".auth/' /etc/containerd/config.toml 
+     sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.auths/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".auth/' /etc/containerd/config.toml
+ 
      sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.mirrors/plugins."io.containerd.grpc.v1.cri".registry.mirrors."RSERVERIP:5000"/' /etc/containerd/config.toml
      sed -i '/auth/a username = "admin"' /etc/containerd/config.toml
      sed -i '/username/a password = "admin@2675"' /etc/containerd/config.toml 
@@ -935,12 +955,18 @@ EOF
 function deploy_control1 () {
   # this is for the first node
 
+  if [[ -z "$MASTERIP1" ]]; then 
+   echo - Please enter Master1 IP in variable
+   exit
+  fi
+
   base
 
   # Setting up Kubernetes Master using Kubeadm
   sleep 10
   mkdir /mnt/join
   mount $BUILD_SERVER_IP:/mnt/common /mnt/join
+  if [[ -z "$LB_IP" ]]; then LB_IP=$MASTERIP1; fi
   #kubeadm init --token=$TOKEN --pod-network-cidr=10.244.0.0/16 --kubernetes-version $KUBE_RELEASE --control-plane-endpoint "$LB_IP:6443" --upload-certs --ignore-preflight-errors=all
   kubeadm init --token=$TOKEN --pod-network-cidr=10.244.0.0/16 --kubernetes-version $KUBE_RELEASE --control-plane-endpoint "$LB_IP:6443" --upload-certs --ignore-preflight-errors=all | grep -Ei "kubeadm join|discovery-token-ca-cert-hash|certificate-key" 2>&1 | tee kubeadm-output.txt
   cp kubeadm-output.txt /mnt/join/
@@ -980,6 +1006,11 @@ function deploy_control1 () {
 function deploy_control23 () {
   # this is for the 2nd & 3rd Master node
 
+  if [[ -z "$MASTERIP1" ]]; then 
+   echo - Please enter Master1 IP in variable
+   exit
+  fi
+
   base
 
   echo - Setting up Kubernetes Master2 and Master3 using Kubeadm
@@ -988,6 +1019,7 @@ function deploy_control23 () {
   mount $BUILD_SERVER_IP:/mnt/common /mnt/join
   CERTKEY=$(more /mnt/join/kubeadm-output.txt | grep certificate-key | sed -n 's/--control-plane --certificate-key//p')
   HASHKEY=$(more /mnt/join/kubeadm-output.txt | grep discovery-token-ca-cert-hash | tail -1 | sed -n 's/--discovery-token-ca-cert-hash//p')
+  if [[ -z "$LB_IP" ]]; then LB_IP=$MASTERIP1; fi
   kubeadm join $LB_IP:6443 --token $TOKEN --discovery-token-ca-cert-hash $HASHKEY --control-plane --certificate-key $CERTKEY --ignore-preflight-errors=all
   sleep 40
 
@@ -1017,13 +1049,24 @@ function deploy_control23 () {
 function deploy_worker () {
   echo - deploy worker
 
+  if [[ -z "$MASTERIP1" ]]; then 
+   echo - Please enter Master1 IP in variable
+   exit
+  fi
+
   base
 
+  # Delete unwanted images
+  cd /opt/k8s/k8s_"$KUBE_RELEASE/images"
+  rm -rf *etcd*.tar *kube-apiserver*.tar *controller*.tar *scheduler*.tar 
+  podman rmi $(podman images | grep -E 'apiserver|controller|scheduler|etcd' | awk '{print $3}') -f
+  crictl rmi $(crictl images | grep -E 'apiserver|controller|scheduler|etcd' | awk '{print $3}') --prune
   echo - Setting up Kubernetes Worker using Kubeadm
   sleep 10
   mkdir /mnt/join
   mount $BUILD_SERVER_IP:/mnt/common /mnt/join
   HASHKEY=$(more /mnt/join/kubeadm-output.txt | grep discovery-token-ca-cert-hash | tail -1 | sed -n 's/--discovery-token-ca-cert-hash//p')
+  if [[ -z "$LB_IP" ]]; then LB_IP=$MASTERIP1; fi
   kubeadm join $LB_IP:6443 --token $TOKEN --discovery-token-ca-cert-hash $HASHKEY --ignore-preflight-errors=all
   sleep 20
   #kubeadm join $LB_IP:6443 --token=$TOKEN --discovery-token-unsafe-skip-ca-verification --ignore-preflight-errors=all
