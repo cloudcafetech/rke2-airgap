@@ -659,8 +659,9 @@ EOF
     curl -#OL  http://archive.ubuntu.com/ubuntu/pool/main/n/nfs-utils/nfs-kernel-server_1.3.4-2.5ubuntu3_amd64.deb
     curl -#OL https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/nfs_offline_install.sh
     sed -i "s/10.182.15.216/$BUILD_SERVER_IP/g" nfs_offline_install.sh
-   cd 
-  fi
+    tar -cvzf nfs-pkg.tar.gz *.deb
+    cd
+  fi 
 
   echo - Download Kube Packages for Ubuntu 20.04 
   if [ ! -f /root/ubuntu-repo/pkg/kubectl*.deb ]; then
@@ -758,18 +759,20 @@ EOF
    systemctl stop apparmor.service
    systemctl disable --now ufw
    systemctl disable --now apparmor.service 
-   echo - Installaing NFS tools
-   cd /opt/k8s/k8s_"$KUBE_RELEASE"
-   mkdir nfspkg
-   cd nfspkg
-   curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/nfs_offline_install.sh && chmod 755 nfs_offline_install.sh
-   ./nfs_offline_install.sh
-   sleep 10 
+   echo - Installing NFS tools
+   mkdir /opt/k8s/k8s_"$KUBE_RELEASE"/nfspkg
+   cd /opt/k8s/k8s_"$KUBE_RELEASE"/nfspkg
+   #curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/nfs_offline_install.sh && chmod 755 nfs_offline_install.sh
+   #./nfs_offline_install.sh
+   curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/nfs-pkg.tar.gz
+   tar -zxvf nfs-pkg.tar.gz
+   sleep 5
+   dpkg -i *.deb
+   echo - Installing CNI tool
    if [[ "$K8SCNI" == "CRIO" ]]; then
      cd /opt/k8s/k8s_"$KUBE_RELEASE"/pkg
      curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/kube-crio-pkg.tar.gz
      curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/registries.conf
-     cp /opt/k8s/k8s_"$KUBE_RELEASE"/kube-crio-pkg.tar.gz .
      tar -zxvf kube-crio-pkg.tar.gz
      rm -rf openssl* 
      dpkg -i *.deb
@@ -793,7 +796,6 @@ EOF
    else
      cd /opt/k8s/k8s_"$KUBE_RELEASE"/pkg
      curl -#OL http://$BUILD_SERVER_IP:8080/ubuntu-repo/kube-cond-pkg.tar.gz
-     cp /opt/k8s/k8s_"$KUBE_RELEASE"/kube-cond-pkg.tar.gz .
      tar -zxvf kube-cond-pkg.tar.gz
      rm -rf openssl* 
      dpkg -i *.deb
@@ -803,7 +805,7 @@ EOF
      mkdir -p /etc/containerd
      containerd config default > /etc/containerd/config.toml 
      sed -i -e 's\            SystemdCgroup = false\            SystemdCgroup = true\g' /etc/containerd/config.toml
-     sed -i 's|    sandbox_image = "registry.k8s.io/pause:3.5"|    sandbox_image = "registry.k8s.io/pause:3.9"|g' /etc/containerd/config.toml
+     sed -i 's|    sandbox_image = "registry.k8s.io/pause:3.6"|    sandbox_image = "registry.k8s.io/pause:3.9"|g' /etc/containerd/config.toml
      sed -i 's/^disabled_plugins = \["cri"\]/#&/' /etc/containerd/config.toml
      sed -i 's/plugins."io.containerd.grpc.v1.cri".registry.configs/plugins."io.containerd.grpc.v1.cri".registry.configs."RSERVERIP:5000".tls/' /etc/containerd/config.toml
      sed -i '/registry.configs/a insecure_skip_verify = true' /etc/containerd/config.toml
@@ -1056,7 +1058,7 @@ function deploy_worker () {
   cd /opt/k8s/k8s_"$KUBE_RELEASE/images"
   rm -rf *etcd*.tar *kube-apiserver*.tar *controller*.tar *scheduler*.tar 
   podman rmi $(podman images | grep -E 'apiserver|controller|scheduler|etcd' | awk '{print $3}') -f
-  crictl rmi $(crictl images | grep -E 'apiserver|controller|scheduler|etcd' | awk '{print $3}') --prune
+  crictl rmi $(crictl images | grep -E 'apiserver|controller|scheduler|etcd' | awk '{print $3}') 
   echo - Setting up Kubernetes Worker using Kubeadm
   sleep 10
   mkdir /mnt/join
