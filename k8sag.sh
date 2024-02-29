@@ -816,7 +816,7 @@ EOF
      sed -i '/username/a password = "admin@2675"' /etc/containerd/config.toml 
      sed -i 's/username/         username/' /etc/containerd/config.toml
      sed -i 's/password/         password/' /etc/containerd/config.toml
-     sed -i '/registry.mirrors/a endpoint = ["http://RSERVERIP:5000"]' /etc/containerd/config.toml
+     sed -i '/registry.mirrors/a endpoint = ["https://RSERVERIP:5000"]' /etc/containerd/config.toml
      sed -i 's/endpoint/         endpoint/' /etc/containerd/config.toml
      sed -i "s/RSERVERIP/$BUILD_SERVER_IP/g" /etc/containerd/config.toml
      systemctl enable --now containerd
@@ -899,7 +899,7 @@ EOF
      sed -i '/username/a password = "admin@2675"' /etc/containerd/config.toml 
      sed -i 's/username/         username/' /etc/containerd/config.toml
      sed -i 's/password/         password/' /etc/containerd/config.toml
-     sed -i '/registry.mirrors/a endpoint = ["http://RSERVERIP:5000"]' /etc/containerd/config.toml
+     sed -i '/registry.mirrors/a endpoint = ["https://RSERVERIP:5000"]' /etc/containerd/config.toml
      sed -i 's/endpoint/         endpoint/' /etc/containerd/config.toml
      sed -i "s/RSERVERIP/$BUILD_SERVER_IP/g" /etc/containerd/config.toml
      systemctl enable --now containerd
@@ -928,7 +928,12 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-     systemctl enable --now kubelet
+    systemctl enable --now kubelet
+    # Due to missing file (/run/systemd/resolve/resolv.conf) error 
+    if [[ ! -f /run/systemd/resolve/resolv.conf ]]; then 
+      mkdir /run/systemd/resolve
+      cp /etc/resolv.conf /run/systemd/resolve/resolv.conf 
+    fi
 
   fi
 
@@ -983,7 +988,7 @@ function deploy_control1 () {
 
   echo - Deploy Container Networking and Routing
   cd /opt/k8s/k8s_"$KUBE_RELEASE"
-  #curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/kube-flannel.yml
+  curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/kube-flannel.yml
   kubectl create -f kube-flannel.yml
   #curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/ingress-controller.yaml
   #kubectl create -f ingress-controller.yaml  
