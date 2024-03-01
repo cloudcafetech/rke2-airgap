@@ -124,6 +124,6 @@ data:
     spec:
       containers:
       - name: helper-pod
-        image: docker.io/busybox
+        image: docker.io/busybox:latest
         imagePullPolicy: IfNotPresent
 
