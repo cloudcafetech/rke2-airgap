@@ -50,7 +50,7 @@ CERT_VERSION=v1.13.3
 RANCHER_VERSION=2.8.1
 LONGHORN_VERSION=1.5.3
 NEU_VERSION=2.6.6
-DOMAIN=awesome.sauce
+DOMAIN="$LB_IP".nip.io
 
 images=(
     "registry.k8s.io/kube-apiserver:${KUBE_RELEASE}"
@@ -453,6 +453,8 @@ function imageload () {
   crane --insecure copy flannel/flannel-cni-plugin:v1.4.0-flannel1 $BUILD_SERVER_IP:5000/flannel/flannel-cni-plugin:v1.4.0-flannel1
   crane --insecure copy registry.k8s.io/ingress-nginx/controller:v1.8.1@sha256:e5c4824e7375fcf2a393e1c03c293b69759af37a9ca6abdb91b13d78a93da8bd $BUILD_SERVER_IP:5000/ingress-nginx/controller:v1.8.1@sha256:e5c4824e7375fcf2a393e1c03c293b69759af37a9ca6abdb91b13d78a93da8bd
   crane --insecure copy registry.k8s.io/ingress-nginx/kube-webhook-certgen:v20230407@sha256:543c40fd093964bc9ab509d3e791f9989963021f1e9e4c9c7b6700b02bfb227b $BUILD_SERVER_IP:5000/ingress-nginx/kube-webhook-certgen:v20230407@sha256:543c40fd093964bc9ab509d3e791f9989963021f1e9e4c9c7b6700b02bfb227b
+  crane --insecure copy quay.io/minio/minio:latest $BUILD_SERVER_IP:5000/minio/minio:latest
+  crane --insecure copy docker.io/busybox:latest $BUILD_SERVER_IP:5000/busybox:latest
 
   echo - Load images for Longhorn
   for i in $(cat /opt/k8s/images/longhorn/longhorn-images.txt); do
@@ -613,13 +615,16 @@ EOF
    rm -rf linux-amd64 > /dev/null 2>&1
   fi
 
-  echo - Get Moitoring and Logging yamls
+  echo - Get Moitoring and Logging 
   cd /opt/k8s/images/others/
   wget -q https://raw.githubusercontent.com/cloudcafetech/AI-for-K8S/main/kubemon.yaml
   wget -q https://github.com/cloudcafetech/kubesetup/raw/master/monitoring/dashboard/pod-monitoring.json
   wget -q https://github.com/cloudcafetech/kubesetup/raw/master/monitoring/dashboard/kube-monitoring-overview.json
   wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/kubelog.yaml
+  wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/loki.yaml
+  mv loki.yaml loki.yaml-minio-s3
   wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/loki.yaml
+  mv loki.yaml loki.yaml-local-filesystem  
   wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/promtail.yaml
   sed -i "s/34.125.24.130/$BUILD_SERVER_PUBIP/g" kubemon.yaml
   sed -i -e "s/quay.io/$BUILD_SERVER_IP:5000/g" -e "s/k8s.gcr.io/$BUILD_SERVER_IP:5000/g" kubemon.yaml
@@ -627,11 +632,18 @@ EOF
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kubelog.yaml
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" promtail.yaml
 
-  echo - Get Certmanager yaml
+  echo - Get Storage 
+  wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/minio.yaml
+  wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/local-path-storage.yaml
+  sed -i -e "s/quay.io/$BUILD_SERVER_IP:5000/g" minio.yaml
+  sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" local-path-storage.yaml
+  sed -i "s/34.125.24.130/$BUILD_SERVER_PUBIP/g" minio.yaml
+
+  echo - Get Certmanager 
   wget -q https://github.com/cert-manager/cert-manager/releases/download/$CERT_VERSION/cert-manager.yaml 
   sed -i -e "s/quay.io/$BUILD_SERVER_IP:5000/g" cert-manager.yaml
 
-  echo - Get Networking and Routing yaml
+  echo - Get Networking and Routing 
   wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/kube-flannel.yml
   wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/ingress-controller.yaml
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kube-flannel.yml
@@ -1081,7 +1093,7 @@ function deploy_worker () {
 ################## Cluster login from Build Server #####################
 function kubelogin () {
   echo - Kubernetes login setup
-  #scp -i <PEM file location> <USER>@<MASTER1>:/home/k8s-aws/config .
+  #scp -i /root/.gcp.pem k8s-aws@$MASTERIP1>:/home/k8s-aws/config .
   mkdir $HOME/.kube
   cp config $HOME/.kube/config
   chown $(id -u):$(id -g) $HOME/.kube/config
@@ -1126,7 +1138,7 @@ function ingcon () {
 
   kubectl label nodes $MASTERDNS1 zone=master
   kubectl label nodes $MASTERDNS2 zone=master
-  kubectl label nodes $MASTERDNS1 zone=master
+  kubectl label nodes $MASTERDNS3 zone=master
 
   kubectl create -f ingress-controller.yaml
   kubectl scale deployment.apps/ingress-nginx-controller -n ingress-nginx --replicas=3
@@ -1136,6 +1148,12 @@ function ingcon () {
 function monlog () {
   # deploy Monitoring & Logging with private registry images
   cd /opt/k8s/images/others/
+
+  echo - Kubernetes Storage Setup
+  kubectl create -f local-path-storage.yaml
+  sleep 10
+  kubectl create -f minio.yaml
+
   echo - Kubernetes Monitoring Setup
   kubectl create ns monitoring
   kubectl create configmap grafana-dashboards -n monitoring --from-file=pod-monitoring.json --from-file=kube-monitoring-overview.json
@@ -1143,10 +1161,13 @@ function monlog () {
 
   echo - Kubernetes Logging Setup
   kubectl create ns logging
+  cp loki.yaml-minio-s3 loki.yaml 
+  #cp loki.yaml-local-filesystem loki.yaml 
   kubectl create secret generic loki -n logging --from-file=loki.yaml
   kubectl create -f kubelog.yaml -n logging
   kubectl delete ds loki-fluent-bit-loki -n logging
   kubectl create -f promtail.yaml -n logging
+
 }
 
 ################################# longhorn ################################
