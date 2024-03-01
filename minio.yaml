@@ -69,14 +69,14 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: minio
+  name: minio-console
   namespace: minio-store
   labels:
     app: minio
 spec:
   ingressClassName: nginx
   rules:
-  - host: minio-store.34.125.24.130.nip.io
+  - host: minio-console.34.125.24.130.nip.io
     http:
       paths:
       - backend:
@@ -84,5 +84,24 @@ spec:
             name: minio-svc
             port:
               number: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-api
+  namespace: minio-store
+  labels:
+    app: minio
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: minio-api.34.125.24.130.nip.io
+    http:
+      paths:
+      - backend:
+          service:
+            name: minio-svc
+            port:
+              number: 9000              
         path: /
         pathType: Prefix
