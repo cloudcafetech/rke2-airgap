@@ -1,4 +1,5 @@
 docker.io/grafana/loki:2.0.0-amd64
+docker.io/grafana/loki:2.8.0
 docker.io/grafana/fluent-bit-plugin-loki:0.1
 docker.io/grafana/fluent-bit-plugin-loki:latest
 docker.io/grafana/grafana:8.5.13
