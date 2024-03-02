@@ -12,6 +12,8 @@ ingester:
       kvstore:
         store: inmemory
     final_sleep: "0s"
+  wal:
+    enabled: false    
   chunk_idle_period: 1h       
   max_chunk_age: 1h           
   chunk_target_size: 1048576  
