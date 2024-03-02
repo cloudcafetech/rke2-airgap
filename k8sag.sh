@@ -449,11 +449,6 @@ function imageload () {
   crane --insecure copy debian:9 $BUILD_SERVER_IP:5000/debian:9
   crane --insecure copy k8s.gcr.io/addon-resizer:1.7 $BUILD_SERVER_IP:5000/addon-resizer:1.7
   crane --insecure copy prom/alertmanager:v0.16.2 $BUILD_SERVER_IP:5000/prometheus/alertmanager:v0.16.0
-  crane --insecure copy flannel/flannel:v0.24.2 $BUILD_SERVER_IP:5000/flannel/flannel:v0.24.2
-  crane --insecure copy flannel/flannel-cni-plugin:v1.4.0-flannel1 $BUILD_SERVER_IP:5000/flannel/flannel-cni-plugin:v1.4.0-flannel1
-  crane --insecure copy registry.k8s.io/ingress-nginx/controller:v1.8.1@sha256:e5c4824e7375fcf2a393e1c03c293b69759af37a9ca6abdb91b13d78a93da8bd $BUILD_SERVER_IP:5000/ingress-nginx/controller:v1.8.1@sha256:e5c4824e7375fcf2a393e1c03c293b69759af37a9ca6abdb91b13d78a93da8bd
-  crane --insecure copy registry.k8s.io/ingress-nginx/kube-webhook-certgen:v20230407@sha256:543c40fd093964bc9ab509d3e791f9989963021f1e9e4c9c7b6700b02bfb227b $BUILD_SERVER_IP:5000/ingress-nginx/kube-webhook-certgen:v20230407@sha256:543c40fd093964bc9ab509d3e791f9989963021f1e9e4c9c7b6700b02bfb227b
-  crane --insecure copy quay.io/minio/minio:latest $BUILD_SERVER_IP:5000/minio/minio:latest
   crane --insecure copy docker.io/busybox:latest $BUILD_SERVER_IP:5000/busybox:latest
 
   echo - Load images for Longhorn
@@ -620,7 +615,7 @@ EOF
   wget -q https://raw.githubusercontent.com/cloudcafetech/AI-for-K8S/main/kubemon.yaml
   wget -q https://github.com/cloudcafetech/kubesetup/raw/master/monitoring/dashboard/pod-monitoring.json
   wget -q https://github.com/cloudcafetech/kubesetup/raw/master/monitoring/dashboard/kube-monitoring-overview.json
-  wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/kubelog.yaml
+  wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/kubelog.yaml
   wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/loki.yaml
   mv loki.yaml loki.yaml-minio-s3
   wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/loki.yaml
