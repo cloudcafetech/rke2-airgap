@@ -54,6 +54,7 @@ metadata:
   name: minio-svc
   namespace: minio-store
 spec:
+  type: NodePort
   selector:
     app: minio
   ports:
