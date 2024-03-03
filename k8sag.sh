@@ -489,6 +489,9 @@ function imageload () {
   echo - Verify Image Upload
   crane --insecure catalog $BUILD_SERVER_IP:5000
 
+  echo - Install Private Registry UI
+  docker run -itd -p 8080:80 --restart=always --name registry-ui -e NGINX_PROXY_PASS_URL=https://$BUILD_SERVER_IP:5000 joxit/docker-registry-ui
+
 }
 
 ################################# build ################################
