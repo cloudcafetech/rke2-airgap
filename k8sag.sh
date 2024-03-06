@@ -1283,7 +1283,7 @@ function usage () {
   echo " $0 lbsetup # Setup LB (HAPROXY) Server"
   echo " $0 websetup # Web (repo) Server"
   echo " $0 ldapsetup # LDAP Server"
-  echo " $0 imgscan # LDAP Server"
+  echo " $0 imgscan # Image Scan"
   echo "-------------------------------------------------------------------------------------------------"
   echo " mkdir /opt/k8s && cd /opt/k8s && curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/k8sag.sh  && chmod 755 k8sag.sh"
   echo "-------------------------------------------------------------------------------------------------"
