@@ -144,7 +144,7 @@ echo - Add LDAP User and Group
 wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/ldap-records.ldif
 ldapadd -x -H ldap://$BUILD_SERVER_IP -D "cn=admin,dc=cloudcafe,dc=org" -w StrongAdminPassw0rd -f ldap-records.ldif
 
-echo - LDAP query (Verify)
+echo - LDAP query 
 ldapsearch -x -H ldap://$BUILD_SERVER_IP -D "cn=admin,dc=cloudcafe,dc=org" -b "dc=cloudcafe,dc=org" -w "StrongAdminPassw0rd"
 
 }
