@@ -111,6 +111,44 @@ openssl req -new -x509 -nodes -sha1 -days 365 -key domain.key -out domain.crt -c
 
 }
 
+########################## LDAP Setup ###########################
+ldapsetup() {
+
+echo - Open LDAP Server
+
+if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+ apt install ldap-utils -y
+else
+ yum install -y openldap-clients sssd sssd-ldap oddjob-mkhomedir openssl-perl
+fi 
+
+if ! command -v docker &> /dev/null; then
+   echo "Docker Not running.."
+   exit
+fi 
+
+echo - Installing LDAP Server 
+
+docker run --restart=always --name ldap-server -p 389:389 -p 636:636 \
+--env LDAP_TLS_VERIFY_CLIENT=try \
+--env LDAP_ORGANISATION="Cloudcafe Org" \
+--env LDAP_DOMAIN="cloudcafe.org" \
+--env LDAP_ADMIN_PASSWORD="StrongAdminPassw0rd" \
+--detach osixia/openldap:latest
+
+echo - Check LDAP Server UP and Running
+sleep 10
+until [ $(docker inspect -f {{.State.Running}} ldap-server)"=="true ]; do echo "Waiting for LDAP to UP..." && sleep 1; done;
+
+echo - Add LDAP User and Group
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/ldap-records.ldif
+ldapadd -x -H ldap://$BUILD_SERVER_IP -D "cn=admin,dc=cloudcafe,dc=org" -w StrongAdminPassw0rd -f ldap-records.ldif
+
+echo - LDAP query (Verify)
+ldapsearch -x -H ldap://$BUILD_SERVER_IP -D "cn=admin,dc=cloudcafe,dc=org" -b "dc=cloudcafe,dc=org" -w "StrongAdminPassw0rd"
+
+}
+
 ########################## Webserver Setup ################################
 websetup() {
 
@@ -712,7 +750,7 @@ EOF
   #imageupload
   #websetup
   #lbsetup
-  #compressall
+  #ldapsetup
 
 }
 
@@ -1203,12 +1241,13 @@ function validate () {
 function usage () {
   echo ""
   echo ""
-  echo " Usage: $0 {build | imageload | websetup | lbsetup | control1 | control23 | worker}"
+  echo " Usage: $0 {build | imageload | websetup | lbsetup | ldapsetup | control1 | control23 | worker}"
   echo ""
   echo " $0 build # Setup Build Server"
   echo " $0 imageload # Upload Images in Private Registry"
   echo " $0 lbsetup # Setup LB (HAPROXY) Server"
   echo " $0 websetup # Web (repo) Server"
+  echo " $0 ldapsetup # LDAP Server"
   echo "-------------------------------------------------------------------------------------------------"
   echo " mkdir /opt/k8s && cd /opt/k8s && curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/k8sag.sh  && chmod 755 k8sag.sh"
   echo "-------------------------------------------------------------------------------------------------"
@@ -1232,6 +1271,7 @@ case "$1" in
         imageload ) imageload;;
         lbsetup ) lbsetup;;
         websetup ) websetup;;
+	ldapsetup ) ldapsetup;;
         control1) deploy_control1;;
         control23) deploy_control23;;
         worker) deploy_worker;;
