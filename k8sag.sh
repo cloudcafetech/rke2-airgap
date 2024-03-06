@@ -144,7 +144,7 @@ echo - Add LDAP User and Group
 wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/ldap-records.ldif
 ldapadd -x -H ldap://$BUILD_SERVER_IP -D "cn=admin,dc=cloudcafe,dc=org" -w StrongAdminPassw0rd -f ldap-records.ldif
 
-echo - LDAP query 
+echo - LDAP query
 ldapsearch -x -H ldap://$BUILD_SERVER_IP -D "cn=admin,dc=cloudcafe,dc=org" -b "dc=cloudcafe,dc=org" -w "StrongAdminPassw0rd"
 
 }
@@ -529,6 +529,41 @@ function imageload () {
 
   echo - Install Private Registry UI
   docker run -itd -p 8080:80 --restart=always --name registry-ui -e NGINX_PROXY_PASS_URL=https://$BUILD_SERVER_IP:5000 joxit/docker-registry-ui
+
+}
+
+########################## Image Scan ###########################
+imgscan() {
+
+TRIVY_USERNAME=admin
+TRIVY_PASSWORD=admin@2675
+CREDS=$TRIVY_USERNAME:$TRIVY_PASSWORD
+TRIVY_NON_SSL=true
+
+# Checking Private Registry
+nc -z $BUILD_SERVER_IP 5000
+if [ $? -ne 0 ]; then echo "Private Registry not running"; exit; fi
+
+# Checking Trivy Image Scanner
+if ! command -v trivy &> /dev/null; then
+  echo - Installing Trivy Image Scanner
+  curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.49.1
+fi
+
+curl -ks --user $CREDS https://$BUILD_SERVER_IP:5000/v2/_catalog | jq -r '.["repositories"][]' | \
+ xargs -I @REPO@ curl -ks --user $CREDS https://$BUILD_SERVER_IP:5000/v2/@REPO@/tags/list | \
+ jq -M '.["name"] + ":" + .["tags"][]' | grep -v error | tr -d '"'> image-list.txt
+
+# Scan images using trivy
+echo - Be patient scan images in progress ..
+d=$(date +%d%m%Y)
+if [ -e report-$d.txt ]; then > report-$d.txt; fi
+
+for img in $(cat image-list.txt); do
+  echo "$img" >> report-$d.txt
+  trivy i $BUILD_SERVER_IP:5000/$img --insecure --severity MEDIUM,HIGH,CRITICAL -q | grep Total >> report-$d.txt
+  echo --------------------------------------------- >> report-$d.txt
+done
 
 }
 
@@ -1241,13 +1276,14 @@ function validate () {
 function usage () {
   echo ""
   echo ""
-  echo " Usage: $0 {build | imageload | websetup | lbsetup | ldapsetup | control1 | control23 | worker}"
+  echo " Usage: $0 {build | imageload | websetup | lbsetup | ldapsetup | imgscan | control1 | control23 | worker}"
   echo ""
   echo " $0 build # Setup Build Server"
   echo " $0 imageload # Upload Images in Private Registry"
   echo " $0 lbsetup # Setup LB (HAPROXY) Server"
   echo " $0 websetup # Web (repo) Server"
   echo " $0 ldapsetup # LDAP Server"
+  echo " $0 imgscan # LDAP Server"
   echo "-------------------------------------------------------------------------------------------------"
   echo " mkdir /opt/k8s && cd /opt/k8s && curl -#OL http://$BUILD_SERVER_IP:8080/k8s_"$KUBE_RELEASE"/k8sag.sh  && chmod 755 k8sag.sh"
   echo "-------------------------------------------------------------------------------------------------"
@@ -1272,6 +1308,7 @@ case "$1" in
         lbsetup ) lbsetup;;
         websetup ) websetup;;
 	ldapsetup ) ldapsetup;;
+        imgscan ) imgscan;;
         control1) deploy_control1;;
         control23) deploy_control23;;
         worker) deploy_worker;;
