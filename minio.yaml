@@ -85,6 +85,8 @@ spec:
             name: minio-svc
             port:
               number: 9090
+        path: /
+        pathType: Prefix              
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
