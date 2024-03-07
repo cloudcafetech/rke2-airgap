@@ -529,7 +529,7 @@ function imageload () {
   crane --insecure catalog $BUILD_SERVER_IP:5000
 
   echo - Install Private Registry UI
-  docker run -itd -p 8080:80 --restart=always --name registry-ui -e NGINX_PROXY_PASS_URL=https://$BUILD_SERVER_IP:5000 joxit/docker-registry-ui
+  docker run -itd -p 8090:80 --restart=always --name registry-ui -e NGINX_PROXY_PASS_URL=https://$BUILD_SERVER_IP:5000 joxit/docker-registry-ui
 
 }
 
@@ -1254,6 +1254,8 @@ function monlog () {
 function adsetup () {
 
 echo - Kubernetes AD Integration
+mkdir adsetup
+cd adsetup
 
 # Certificate Generate
 wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/certgen.sh
@@ -1362,8 +1364,8 @@ do
  scp -i /root/.gcp.pem add-line.txt k8s-aws@"$i":/home/k8s-aws/add-line.txt
 done
 
-echo - Run command "(cp /home/k8s-aws/dex-ca.crt /etc/kubernetes/pki/dex-ca.crt)" in each master
-echo - Run command "(sed -i '/--allow-privileged=true/r /home/k8s-aws/add-line.txt' /etc/kubernetes/manifests/kube-apiserver.yaml)" in each master
+echo - Run as a root "(cp /home/k8s-aws/dex-ca.crt /etc/kubernetes/pki/dex-ca.crt)" in each master
+echo - Run as a root "(sed -i '/--allow-privileged=true/r /home/k8s-aws/add-line.txt' /etc/kubernetes/manifests/kube-apiserver.yaml)" in each master
 
 }
 
@@ -1416,14 +1418,14 @@ function usage () {
   echo " $0 control1 # Deploy 1st Master Server"
   echo " $0 control23 # Deploy 2nd & 3rd Master Server"
   echo " $0 worker # Deploy Worker"
-  echo " $0 flask # deploy a 3 tier app"
-  echo " $0 certman # deploy certmanager"
-  echo " $0 ingcon # deploy ingress controller"
-  echo " $0 monlog # deploy monitoring & logging"
+  echo " $0 flask # Deploy a 3 tier app"
+  echo " $0 certman # Deploy certmanager"
+  echo " $0 ingcon # Deploy ingress controller"
+  echo " $0 monlog # Deploy monitoring & logging"
   echo " $0 adsetup # AD integration"
-  echo " $0 neuvector # deploy neuvector"
-  echo " $0 longhorn # deploy longhorn"
-  echo " $0 rancher # deploy rancher"
+  echo " $0 neuvector # Deploy neuvector"
+  echo " $0 longhorn # Deploy longhorn"
+  echo " $0 rancher # Deploy rancher"
   echo " $0 validate # validate all the image locations"
   echo ""
   exit 1
