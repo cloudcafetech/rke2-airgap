@@ -328,6 +328,7 @@ EOF
    systemctl stop apparmor.service
    systemctl disable --now ufw
    systemctl disable --now apparmor.service 
+   systemctl restart haproxy
   else
 
 cat <<EOF > /etc/rsyslog.d/99-haproxy.conf
@@ -1048,7 +1049,7 @@ function deploy_control1 () {
 
   base
 
-  # Setting up Kubernetes Master using Kubeadm
+  echo - Setting up Kubernetes master "($(hostname))" using Kubeadm
   sleep 10
   mkdir /mnt/join
   mount $BUILD_SERVER_IP:/mnt/common /mnt/join
@@ -1062,7 +1063,11 @@ function deploy_control1 () {
   chown $(id -u):$(id -g) $HOME/.kube/config
   export KUBECONFIG=$HOME/.kube/config
   echo "export KUBECONFIG=$HOME/.kube/config" >> $HOME/.bash_profile
-  echo "alias oc=/usr/bin/kubectl" >> /root/.bash_profile
+  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   echo "alias oc=/usr/bin/kubectl" >> /root/.bash_profile
+  else
+   echo "alias oc=/usr/local/bin/kubectl" >> /root/.bash_profile
+  fi
   chmod 600 $HOME/.kube/config
   cp $HOME/.kube/config /home/k8s-aws/
   chown k8s-aws:k8s-aws /home/k8s-aws/config
@@ -1099,7 +1104,7 @@ function deploy_control23 () {
 
   base
 
-  echo - Setting up Kubernetes Master2 and Master3 using Kubeadm
+  echo - Setting up Kubernetes master "($(hostname))" using Kubeadm
   sleep 10
   mkdir /mnt/join
   mount $BUILD_SERVER_IP:/mnt/common /mnt/join
@@ -1122,7 +1127,11 @@ function deploy_control23 () {
   chown $(id -u):$(id -g) $HOME/.kube/config
   export KUBECONFIG=$HOME/.kube/config
   echo "export KUBECONFIG=$HOME/.kube/config" >> $HOME/.bash_profile
-  echo "alias oc=/usr/bin/kubectl" >> /root/.bash_profile
+  if [[ -n $(uname -a | grep -iE 'ubuntu|debian') ]]; then 
+   echo "alias oc=/usr/bin/kubectl" >> /root/.bash_profile
+  else
+   echo "alias oc=/usr/local/bin/kubectl" >> /root/.bash_profile
+  fi
   chmod 600 $HOME/.kube/config
   cp $HOME/.kube/config /home/k8s-aws/
   chown k8s-aws:k8s-aws /home/k8s-aws/config
@@ -1147,7 +1156,7 @@ function deploy_worker () {
   rm -rf *etcd*.tar *kube-apiserver*.tar *controller*.tar *scheduler*.tar 
   podman rmi $(podman images | grep -E 'apiserver|controller|scheduler|etcd' | awk '{print $3}') -f
   crictl rmi $(crictl images | grep -E 'apiserver|controller|scheduler|etcd' | awk '{print $3}') 
-  echo - Setting up Kubernetes Worker using Kubeadm
+  echo - Setting up Kubernetes worker "($(hostname))" using Kubeadm
   sleep 10
   mkdir /mnt/join
   mount $BUILD_SERVER_IP:/mnt/common /mnt/join
@@ -1241,6 +1250,123 @@ function monlog () {
 
 }
 
+################## Cluster AD Integration #####################
+function adsetup () {
+
+echo - Kubernetes AD Integration
+
+# Certificate Generate
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/certgen.sh
+sed -i -e "s|172.30.2.2|$BUILD_SERVER_PUBIP|g" certgen.sh
+chmod 755 certgen.sh
+./certgen.sh
+
+# Setup K8s Dashboard
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/dashboard/dashboard-ui.yaml
+sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" dashboard-ui.yaml
+kubectl apply -f dashboard-ui.yaml
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/dashboard/dashboard-ing.yaml
+sed -i -e "s|172.30.2.2|$BUILD_SERVER_PUBIP|g" dashboard-ing.yaml
+kubectl create -f dashboard-ing.yaml
+
+# Dex Deployment
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/dex-ldap-cm.yaml
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/dex.yaml
+sed -i -e "s/ghcr.io/$BUILD_SERVER_IP:5000/g" dex.yaml
+sed -i -e "s|172.30.2.2|$BUILD_SERVER_PUBIP|g" dex-ldap-cm.yaml
+sed -i -e "s|172.30.1.2|$BUILD_SERVER_IP|g" dex-ldap-cm.yaml
+sed -i -e "s|:30443||g" dex-ldap-cm.yaml
+sed -i -e "s|172.30.2.2|$BUILD_SERVER_PUBIP|g" dex.yaml
+kubectl create -f dex-ldap-cm.yaml
+kubectl create -f dex.yaml
+
+# Check for Dex POD UP
+echo "Waiting for Dex POD ready .."
+DEXPOD=$(kubectl get pod -n auth-system | grep dex | awk '{print $1}')
+kubectl wait pods/$DEXPOD --for=condition=Ready --timeout=5m -n auth-system
+
+# Oauth Deployment
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/oauth-proxy.yaml
+sed -i -e "s/quay.io/$BUILD_SERVER_IP:5000/g" oauth-proxy.yaml
+sed -i -e "s|:30443||g" oauth-proxy.yaml
+sed -i -e "s|172.30.2.2|$BUILD_SERVER_PUBIP|g" oauth-proxy.yaml
+kubectl create -f oauth-proxy.yaml
+
+# Check for OAuth POD UP
+echo "Waiting for OAuth POD ready .."
+OAPOD=$(kubectl get pod -n auth-system | grep oauth | awk '{print $1}')
+kubectl wait pods/$OAPOD --for=condition=Ready --timeout=5m -n auth-system
+
+# Gangway Deployment
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/gangway.yaml
+sed -i -e "s/gcr.io/$BUILD_SERVER_IP:5000/g" gangway.yaml
+if [[ -z "$LB_IP" ]]; then LB_IP=$MASTERIP1; fi
+sed -i -e "s|10.182.0.13|$LB_IP|g" gangway.yaml
+sed -i -e "s|172.30.1.2|$BUILD_SERVER_PUBIP|g" gangway.yaml
+kubectl create -f gangway.yaml
+
+# Check for Gangway POD UP
+echo "Waiting for Gangway POD ready .."
+GWPOD=$(kubectl get pod -n auth-system | grep gangway | awk '{print $1}')
+kubectl wait pods/$GWPOD --for=condition=Ready --timeout=5m -n auth-system
+
+# Create the role binding for different users
+kubectl create clusterrolebinding debrupkar-view --clusterrole=view --user=debrupkar@cloudcafe.org 
+kubectl create clusterrolebinding prasenkar-admin --clusterrole=admin --user=prasenkar@cloudcafe.org
+
+# Status
+kubectl get po -n ingress-nginx 
+kubectl get po -n kubernetes-dashboard
+kubectl get po -n auth-system
+
+# Check for API server POD UP & Running without error
+echo "Waiting for API server POD UP & Running without Error .."
+APIPOD=$(kubectl get pod -n kube-system | grep kube-apiserver | awk '{print $1}')
+kubectl wait pods/$APIPOD --for=condition=Ready --timeout=5m -n kube-system
+kubectl logs $APIPOD -n kube-system
+
+# Monitoring login (LDAP) enablement
+echo "Make sure monitoring is installed .."
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/ldap.toml
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/grafana-ldap.yaml
+sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" grafana-ldap.yaml
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/kubemon-ingress.yaml
+sed -i -e "s|172.30.1.2|$BUILD_SERVER_PUBIP|g" kubemon-ingress.yaml
+sed -i -e "s|172.30.1.2|$BUILD_SERVER_IP|g" ldap.toml
+kubectl delete ing prom alert -n monitoring
+kubectl create -f kubemon-ingress.yaml
+kubectl delete deployment.apps/grafana -n monitoring
+kubectl delete cm grafana-ini -n monitoring
+kubectl create secret generic grafana-ldap-toml --from-file=ldap.toml=./ldap.toml -n monitoring
+kubectl create -f grafana-ldap.yaml -n monitoring
+
+# Check for Grafana POD UP & Running
+echo "Waiting for  Grafana POD UP & Running without Error .."
+GFPOD=$(kubectl get pod -n monitoring | grep grafana | awk '{print $1}')
+kubectl wait pods/$GFPOD --for=condition=Ready --timeout=2m -n monitoring
+
+# New users insert script in LDAP
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/new-user-ldap.sh
+sed -i -e "s|172.168.1.1|$BUILD_SERVER_IP|g" new-user-ldap.sh
+chmod 755 new-user-ldap.sh
+#./new-user-ldap.sh
+
+# Copy Certificate & edit the Kubernetes API configuration for Kubeadm
+wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/add-line.txt
+sed -i -e "s|172.30.1.2|$BUILD_SERVER_PUBIP|g" add-line.txt
+cp ssl/ca.crt dex-ca.crt
+declare -a arr=("$MASTERIP1" "$MASTERIP2" "$MASTERIP3")
+for i in "${arr[@]}"
+do
+ scp -i /root/.gcp.pem dex-ca.crt k8s-aws@"$i":/home/k8s-aws/dex-ca.crt
+ scp -i /root/.gcp.pem add-line.txt k8s-aws@"$i":/home/k8s-aws/add-line.txt
+done
+
+echo - Run command "(cp /home/k8s-aws/dex-ca.crt /etc/kubernetes/pki/dex-ca.crt)" in each master
+echo - Run command "(sed -i '/--allow-privileged=true/r /home/k8s-aws/add-line.txt' /etc/kubernetes/manifests/kube-apiserver.yaml)" in each master
+
+}
+
 ################################# longhorn ################################
 function longhorn () {
   # deploy longhorn with private registry images
@@ -1294,6 +1420,7 @@ function usage () {
   echo " $0 certman # deploy certmanager"
   echo " $0 ingcon # deploy ingress controller"
   echo " $0 monlog # deploy monitoring & logging"
+  echo " $0 adsetup # AD integration"
   echo " $0 neuvector # deploy neuvector"
   echo " $0 longhorn # deploy longhorn"
   echo " $0 rancher # deploy rancher"
@@ -1316,6 +1443,7 @@ case "$1" in
         certman) certman;;
         ingcon) ingcon;;
         monlog) monlog;;
+        adsetup) adsetup;;
         neuvector) neuvector;;
         longhorn) longhorn;;
         rancher) rancher;;
