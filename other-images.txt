@@ -18,3 +18,4 @@ registry.k8s.io/ingress-nginx/kube-webhook-certgen:v20230407@sha256:543c40fd0939
 quay.io/minio/minio:latest
 docker.io/flannel/flannel:v0.24.2
 docker.io/flannel/flannel-cni-plugin:v1.4.0-flannel1
+ghcr.io/stakater/reloader:v1.0.69
