@@ -19,3 +19,5 @@ quay.io/minio/minio:latest
 docker.io/flannel/flannel:v0.24.2
 docker.io/flannel/flannel-cni-plugin:v1.4.0-flannel1
 ghcr.io/stakater/reloader:v1.0.69
+registry.k8s.io/metrics-server/metrics-server:v0.7.0
+
