@@ -694,6 +694,9 @@ EOF
   wget -q https://github.com/cloudcafetech/kubesetup/raw/master/monitoring/dashboard/kube-monitoring-overview.json
   wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/kubelog.yaml
   wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/loki.yaml
+  wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/metric-server.yaml
+  wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/reloader.yaml
+
   mv loki.yaml loki.yaml-minio-s3
   wget -q https://raw.githubusercontent.com/cloudcafetech/kubesetup/master/logging/loki.yaml
   mv loki.yaml loki.yaml-local-filesystem  
@@ -703,6 +706,8 @@ EOF
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kubemon.yaml
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" kubelog.yaml
   sed -i -e "s/docker.io/$BUILD_SERVER_IP:5000/g" promtail.yaml
+  sed -i -e "s/ghcr.io/$BUILD_SERVER_IP:5000/g" reloader.yaml
+  sed -i -e "s/registry.k8s.io/$BUILD_SERVER_IP:5000/g" metric-server.yaml
 
   echo - Get Storage 
   wget -q https://raw.githubusercontent.com/cloudcafetech/rke2-airgap/main/minio.yaml
@@ -1229,16 +1234,19 @@ function monlog () {
   # deploy Monitoring & Logging with private registry images
   cd /opt/k8s/images/others/
 
+  echo ""
   echo - Kubernetes Storage Setup
   kubectl create -f local-path-storage.yaml
   sleep 10
   kubectl create -f minio.yaml
 
+  echo ""
   echo - Kubernetes Monitoring Setup
   kubectl create ns monitoring
   kubectl create configmap grafana-dashboards -n monitoring --from-file=pod-monitoring.json --from-file=kube-monitoring-overview.json
   kubectl create -f kubemon.yaml -n monitoring
 
+  echo ""
   echo - Kubernetes Logging Setup
   kubectl create ns logging
   cp loki.yaml-minio-s3 loki.yaml 
@@ -1248,11 +1256,17 @@ function monlog () {
   kubectl delete ds loki-fluent-bit-loki -n logging
   kubectl create -f promtail.yaml -n logging
 
+  echo ""
+  echo - Kubernetes Metric and Reloader tool Setup
+  kubectl create -f reloader.yaml
+  kubectl create -f metric-server.yaml
+
 }
 
 ################## Cluster AD Integration #####################
 function adsetup () {
 
+echo ""
 echo - Kubernetes AD Integration
 mkdir adsetup
 cd adsetup
@@ -1283,6 +1297,7 @@ kubectl create -f dex-ldap-cm.yaml
 kubectl create -f dex.yaml
 
 # Check for Dex POD UP
+echo ""
 echo "Waiting for Dex POD ready .."
 DEXPOD=$(kubectl get pod -n auth-system | grep dex | awk '{print $1}')
 kubectl wait pods/$DEXPOD --for=condition=Ready --timeout=5m -n auth-system
@@ -1295,6 +1310,7 @@ sed -i -e "s|172.30.2.2|$BUILD_SERVER_PUBIP|g" oauth-proxy.yaml
 kubectl create -f oauth-proxy.yaml
 
 # Check for OAuth POD UP
+echo ""
 echo "Waiting for OAuth POD ready .."
 OAPOD=$(kubectl get pod -n auth-system | grep oauth | awk '{print $1}')
 kubectl wait pods/$OAPOD --for=condition=Ready --timeout=5m -n auth-system
@@ -1308,6 +1324,7 @@ sed -i -e "s|172.30.1.2|$BUILD_SERVER_PUBIP|g" gangway.yaml
 kubectl create -f gangway.yaml
 
 # Check for Gangway POD UP
+echo ""
 echo "Waiting for Gangway POD ready .."
 GWPOD=$(kubectl get pod -n auth-system | grep gangway | awk '{print $1}')
 kubectl wait pods/$GWPOD --for=condition=Ready --timeout=5m -n auth-system
@@ -1322,12 +1339,14 @@ kubectl get po -n kubernetes-dashboard
 kubectl get po -n auth-system
 
 # Check for API server POD UP & Running without error
+echo ""
 echo "Waiting for API server POD UP & Running without Error .."
 APIPOD=$(kubectl get pod -n kube-system | grep kube-apiserver | awk '{print $1}')
 kubectl wait pods/$APIPOD --for=condition=Ready --timeout=5m -n kube-system
 kubectl logs $APIPOD -n kube-system
 
 # Monitoring login (LDAP) enablement
+echo ""
 echo "Make sure monitoring is installed .."
 wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/ldap.toml
 wget -q https://raw.githubusercontent.com/cloudcafetech/k8s-ad-integration/main/grafana-ldap.yaml
@@ -1343,6 +1362,7 @@ kubectl create secret generic grafana-ldap-toml --from-file=ldap.toml=./ldap.tom
 kubectl create -f grafana-ldap.yaml -n monitoring
 
 # Check for Grafana POD UP & Running
+echo ""
 echo "Waiting for  Grafana POD UP & Running without Error .."
 GFPOD=$(kubectl get pod -n monitoring | grep grafana | awk '{print $1}')
 kubectl wait pods/$GFPOD --for=condition=Ready --timeout=2m -n monitoring
