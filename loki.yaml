@@ -39,7 +39,7 @@ storage_config:
     region: null
     s3forcepathstyle: true
     access_key_id: minioadmin
-    secret_access_key: minioadmin
+    secret_access_key: admin@2675
   boltdb_shipper:
     active_index_directory: /data/loki/index
     cache_location: /data/loki/cache
