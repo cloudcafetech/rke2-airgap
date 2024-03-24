@@ -60,9 +60,11 @@ images=(
     "registry.k8s.io/pause:3.6"
     "registry.k8s.io/pause:3.8"
     "registry.k8s.io/pause:3.9"
-    "registry.k8s.io/etcd:3.5.10-0"
     "registry.k8s.io/etcd:3.5.9-0"
-    "registry.k8s.io/coredns/coredns:v1.10.1" 
+    "registry.k8s.io/etcd:3.5.10-0"
+    "registry.k8s.io/etcd:3.5.12-0"
+    "registry.k8s.io/coredns/coredns:v1.10.1"
+    "registry.k8s.io/coredns/coredns:v1.11.1"
 )
 
 ######  NO MOAR EDITS #######
