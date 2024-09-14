@@ -862,7 +862,7 @@ function deploy_worker () {
   cp /opt/rancher/rke2_$RKE_VERSION/registries.yaml /etc/rancher/rke2/registries.yaml
 
 cat << EOF >  /etc/rancher/rke2/config.yaml
-server: https://$MASTERIP1:9345
+server: https://$LB_IP:9345
 token: pkls-secret
 node-label:
 - "region=worker"
