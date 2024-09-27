@@ -16,9 +16,14 @@ while IFS= read -r img; do
   IMG=`echo $img | cut -d "/" -f3 | cut -d ":" -f1`
   podman pull $img
   podman save --output "$IMG".tar $img
+  tar --zstd -cvf images/"$IMG".tar.zst "$IMG".tar
 done < quay.txt
 
 tar cf - quay-images/ | zstd > quay-images.tar.zst
+
+tar --zstd -cvf directory.tar.zst directory
+
+tar --zstd -cvf registry.tar.zst registry.tar
 
 ----------------
 
