@@ -139,6 +139,11 @@ tar -zxvf go-containerregistry.tar.gz -C /usr/local/bin/ crane
 crane auth login $PRI_REGISTRY:80 -u $PRI_REGISTRY_USER -p $PRI_REGISTRY_PASS
 crane --insecure push registry.tar registry.$DOMAIN:80/registry:1.0.0
 
+while IFS= read -r img; do
+  IMG=`echo $img | cut -d "/" -f2- `
+  TAR=`echo $img | cut -d "/" -f3 | cut -d ":" -f1 `
+  crane --insecure push $TAR.tar registry.$DOMAIN:80/$IMG
+done < quay.txt
 
 curl -s --user $PRI_REGISTRY_USER:$PRI_REGISTRY_PASS http://registry.$DOMAIN/v2/_catalog | jq .repositories | sed -n 's/[ ",]//gp' | xargs -IIMAGE \
  curl -s --user $PRI_REGISTRY_USER:$PRI_REGISTRY_PASS http://registry.$DOMAIN/v2/IMAGE/tags/list | jq '. as $parent | .tags[] | $parent.name + ":" + . '
